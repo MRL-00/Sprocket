@@ -44,63 +44,36 @@ enum MenuBarIconRenderer {
         }
     }
 
-    // 8-tooth gear in the upper-left quadrant so the badge can sit lower-right.
+    // Centered bicycle-chainring silhouette: toothed perimeter, 5 spoke cutouts,
+    // 5 bolt holes, hub hole. Single path with even-odd fill so it tints cleanly.
     private static func drawGearSilhouette(in rect: NSRect, template: Bool, state: MenuBarState) {
-        let teeth = 8
-        let cx = rect.minX + rect.width * 0.36
-        let cy = rect.minY + rect.height * 0.64
-        let outer = rect.width * 0.30
-        let inner = rect.width * 0.21
-        let path = NSBezierPath()
-        for i in 0..<teeth {
-            let a = (Double(i) / Double(teeth)) * .pi * 2
-            let next = (Double(i + 1) / Double(teeth)) * .pi * 2
-            let half = (next - a) / 2
-            let pts: [(Double, Double)] = [
-                (cos(a + half - 0.22), sin(a + half - 0.22)),
-                (cos(a + half - 0.13), sin(a + half - 0.13)),
-                (cos(a + half + 0.13), sin(a + half + 0.13)),
-                (cos(a + half + 0.22), sin(a + half + 0.22)),
-            ]
-            let radii: [Double] = [inner, outer, outer, inner]
-            for (idx, p) in pts.enumerated() {
-                let r = radii[idx]
-                let x = cx + p.0 * r
-                let y = cy + p.1 * r
-                if i == 0 && idx == 0 { path.move(to: NSPoint(x: x, y: y)) }
-                else { path.line(to: NSPoint(x: x, y: y)) }
-            }
-        }
-        path.close()
+        let cx = rect.midX
+        let cy = rect.midY
+        let radius = min(rect.width, rect.height) * 0.46
+
+        let path = SprocketGeometry.chainringPath(centerX: cx, centerY: cy, radius: radius)
 
         let fg: NSColor = template
-            ? NSColor.black                                  // template image; OS tints
+            ? NSColor.black
             : (state == .authMissing ? NSColor(white: 0.6, alpha: 1) : NSColor.black)
         fg.setFill()
         path.fill()
-
-        // Inner ring
-        let ringRadius = rect.width * 0.085
-        let ring = NSBezierPath(ovalIn: NSRect(
-            x: cx - ringRadius, y: cy - ringRadius,
-            width: ringRadius * 2, height: ringRadius * 2
-        ))
-        ring.lineWidth = 1.4
-        if template { NSColor.black.setStroke() } else { fg.setStroke() }
-        ring.stroke()
-        // Punch the centre hole so the gear reads at small sizes
-        NSColor.clear.setFill()
-        let hole = NSBezierPath(ovalIn: NSRect(
-            x: cx - ringRadius * 0.55, y: cy - ringRadius * 0.55,
-            width: ringRadius * 1.1, height: ringRadius * 1.1
-        ))
-        hole.fill()
     }
 
     private static func drawBadge(in rect: NSRect, state: MenuBarState, template: Bool) {
-        let bx = rect.minX + rect.width * 0.62
-        let by = rect.minY + rect.height * 0.30
-        let r  = rect.width * 0.24
+        let bx = rect.minX + rect.width * 0.74
+        let by = rect.minY + rect.height * 0.26
+        let r  = rect.width * 0.20
+        // Punch a transparent ring around the badge so it doesn't blend with the chainring
+        let cutoutR = r * 1.18
+        let cutout = NSBezierPath(ovalIn: NSRect(
+            x: bx - cutoutR, y: by - cutoutR,
+            width: cutoutR * 2, height: cutoutR * 2
+        ))
+        NSGraphicsContext.current?.cgContext.setBlendMode(.clear)
+        cutout.fill()
+        NSGraphicsContext.current?.cgContext.setBlendMode(.normal)
+
         let badgeRect = NSRect(x: bx - r, y: by - r, width: r * 2, height: r * 2)
 
         let badge = NSBezierPath(ovalIn: badgeRect)

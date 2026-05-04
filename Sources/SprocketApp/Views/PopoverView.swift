@@ -16,7 +16,10 @@ struct PopoverView: View {
             OrgSwitcherRow()
             Divider().opacity(0.6)
             if !state.isAuthed && !state.mockMode {
-                SignedOutPlaceholder { openWindow(id: "welcome") }
+                SignedOutPlaceholder {
+                    NSApp.activate(ignoringOtherApps: true)
+                    openWindow(id: "welcome")
+                }
             } else {
                 RunListView()
             }
@@ -35,7 +38,10 @@ struct PopoverView: View {
             guard !didBootstrap, !state.mockMode else { return }
             didBootstrap = true
             await state.bootstrap()
-            if !state.isAuthed { openWindow(id: "welcome") }
+            if !state.isAuthed {
+                NSApp.activate(ignoringOtherApps: true)
+                openWindow(id: "welcome")
+            }
         }
     }
 }

@@ -111,12 +111,12 @@ struct WelcomeWindow: View {
     }
 }
 
-/// GitHub OAuth Client IDs come in two shapes:
-/// - Legacy OAuth Apps: `Iv1.<16-hex>` (20 chars total)
-/// - GitHub Apps and newer OAuth Apps: `Iv23.<...>` (varies)
-/// Anything 12+ chars starting with `Iv` is a reasonable guess.
+/// GitHub Client IDs:
+/// - Legacy OAuth Apps: `Iv1.<16-hex>` (contains a dot)
+/// - GitHub Apps:        `Iv23li…`     (no dot)
+/// - New OAuth Apps:     `Ov23li…`     (no dot)
 func isPlausibleClientID(_ s: String) -> Bool {
-    s.hasPrefix("Iv") && s.contains(".") && s.count >= 12
+    (s.hasPrefix("Iv") || s.hasPrefix("Ov")) && s.count >= 12
 }
 
 private struct WelcomeStep1: View {
@@ -210,7 +210,7 @@ private struct WelcomeStep2: View {
 
             HStack(spacing: 8) {
                 Button {
-                    openURL(URL(string: "https://github.com/settings/applications/new")!)
+                    openURL(Self.registrationURL)
                 } label: {
                     Label("Open GitHub to create app", systemImage: "arrow.up.right.square")
                 }
@@ -219,7 +219,7 @@ private struct WelcomeStep2: View {
 
                 Button {
                     NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString("https://github.com/settings/applications/new", forType: .string)
+                    NSPasteboard.general.setString(Self.registrationURL.absoluteString, forType: .string)
                 } label: {
                     Label("Copy registration URL", systemImage: "doc.on.doc")
                 }
@@ -228,6 +228,18 @@ private struct WelcomeStep2: View {
             .padding(.top, 6)
         }
     }
+
+    private static let registrationURL: URL = {
+        var c = URLComponents(string: "https://github.com/settings/applications/new")!
+        c.queryItems = [
+            URLQueryItem(name: "oauth_application[name]", value: "Sprocket"),
+            URLQueryItem(name: "oauth_application[url]", value: "https://github.com/MRL-00/Sprocket"),
+            URLQueryItem(name: "oauth_application[callback_url]", value: "https://localhost/callback"),
+            URLQueryItem(name: "oauth_application[description]",
+                         value: "Menu-bar GitHub Actions monitor. Uses Device Flow — callback URL is unused."),
+        ]
+        return c.url!
+    }()
 }
 
 private struct StepLine: View {

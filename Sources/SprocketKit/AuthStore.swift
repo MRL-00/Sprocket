@@ -67,8 +67,12 @@ public actor AuthStore {
         ]
         var item: CFTypeRef?
         let status = SecItemCopyMatching(q as CFDictionary, &item)
-        guard status == errSecSuccess, let data = item as? Data else { return nil }
-        return data
+        if status == errSecItemNotFound { return nil }
+        if status != errSecSuccess {
+            NSLog("Sprocket: Keychain read failed for \(account), OSStatus=\(status)")
+            return nil
+        }
+        return item as? Data
     }
 
     private func writeKeychain(account: String, data: Data) throws {
