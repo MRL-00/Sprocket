@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Sprocket — Menu Bar App for GitHub Actions</title>
+<meta name="viewport" content="width=1500" />
+<style>
+  html, body { margin: 0; padding: 0; background: #f0eee9; font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
+
+  /* Theme tokens. Default = light. Dark scope flips them.
+     .theme-light forces light tokens locally even inside a .theme-dark ancestor. */
+  :root, .theme-light {
+    --surface: rgba(248, 246, 242, 0.78);
+    --surface-solid: #faf8f4;
+    --surface-sticky: rgba(248, 246, 242, 0.92);
+    --surface-border: rgba(0,0,0,0.10);
+    --divider: rgba(0,0,0,0.07);
+    --text-1: #1c1a17;
+    --text-2: rgba(28,26,23,.80);
+    --text-3: rgba(28,26,23,.55);
+    --text-4: rgba(28,26,23,.32);
+    --chip-bg: rgba(0,0,0,0.05);
+    --card-bg: rgba(255,255,255,0.6);
+    --card-border: rgba(0,0,0,0.08);
+    --code-bg: rgba(0,0,0,0.04);
+    --info-bg: rgba(0,0,0,0.03);
+    --footer-bg: rgba(0,0,0,0.02);
+    --titlebar-bg: rgba(0,0,0,0.02);
+    --input-bg: #fff;
+    --track: rgba(0,0,0,0.08);
+    --track-strong: rgba(0,0,0,0.18);
+    --seg-on: #fff;
+    --seg-on-border: rgba(0,0,0,0.06);
+    --popover-shadow: 0 1px 0 rgba(255,255,255,.6) inset, 0 24px 60px rgba(0,0,0,.22), 0 4px 14px rgba(0,0,0,.10);
+    --row-hover: rgba(0,0,0,0.04);
+  }
+  .theme-dark {
+    --surface: rgba(28, 28, 31, 0.72);
+    --surface-solid: #1f1e22;
+    --surface-sticky: rgba(28,28,31,0.92);
+    --surface-border: rgba(255,255,255,0.10);
+    --divider: rgba(255,255,255,0.08);
+    --text-1: #ecebe8;
+    --text-2: rgba(236,235,232,.82);
+    --text-3: rgba(236,235,232,.56);
+    --text-4: rgba(236,235,232,.32);
+    --chip-bg: rgba(255,255,255,0.07);
+    --card-bg: rgba(255,255,255,0.04);
+    --card-border: rgba(255,255,255,0.08);
+    --code-bg: rgba(0,0,0,0.30);
+    --info-bg: rgba(255,255,255,0.04);
+    --footer-bg: rgba(0,0,0,0.18);
+    --titlebar-bg: rgba(0,0,0,0.20);
+    --input-bg: rgba(255,255,255,0.06);
+    --track: rgba(255,255,255,0.10);
+    --track-strong: rgba(255,255,255,0.22);
+    --seg-on: rgba(255,255,255,0.12);
+    --seg-on-border: rgba(255,255,255,0.10);
+    --popover-shadow: 0 1px 0 rgba(255,255,255,.06) inset, 0 24px 60px rgba(0,0,0,.6), 0 4px 14px rgba(0,0,0,.4);
+    --row-hover: rgba(255,255,255,0.05);
+  }
+
+  /* Reusable component styles */
+  .sp-iconbtn {
+    appearance: none; border: 0; background: transparent; color: var(--text-2);
+    width: 22px; height: 22px; border-radius: 5px; display: inline-flex;
+    align-items: center; justify-content: center; cursor: default; padding: 0;
+  }
+  .sp-iconbtn:hover { background: var(--row-hover); color: var(--text-1); }
+
+  .sp-row { transition: background .08s; }
+  .sp-row:hover { background: var(--row-hover); }
+  .sp-row + .sp-row { border-top: .5px solid var(--divider); }
+
+  .sp-seg {
+    display: inline-flex; padding: 2px; border-radius: 7px;
+    background: var(--track); gap: 0;
+  }
+  .sp-seg-btn {
+    appearance: none; border: 0; background: transparent;
+    padding: 3px 9px; border-radius: 5px;
+    font: inherit; font-size: 11px; color: var(--text-2); font-weight: 500;
+    cursor: default; line-height: 1.4;
+  }
+  .sp-seg-btn.is-on { color: var(--text-1); }
+
+  .sp-search, .sp-search-wide, .sp-input, .sp-input-mono, .sp-select {
+    width: 100%; height: 24px; padding: 0 8px 0 22px; border-radius: 6px;
+    border: .5px solid var(--card-border); background: var(--input-bg);
+    color: var(--text-1); font: inherit; font-size: 11.5px; outline: none;
+  }
+  .sp-search { padding-left: 22px; }
+  .sp-search-wide { height: 26px; padding-left: 26px; }
+  .sp-input, .sp-input-mono, .sp-select { padding-left: 8px; height: 26px; }
+  .sp-input-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .sp-search ~ * {}
+  .sp-popover .sp-search + * {}
+
+  /* search icon positioned absolutely inside its parent <div> */
+  .sp-popover [style*="position: relative"] svg, .sp-search-wide ~ svg { /* overrides for layout */ }
+  .sp-popover [style*="position: relative"] > svg:first-child {
+    position: absolute; left: 7px; top: 50%; transform: translateY(-50%); pointer-events: none;
+  }
+
+  .sp-orgswitch {
+    appearance: none; border: 0; background: transparent;
+    color: var(--text-1); font: inherit; font-size: 11px;
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 4px; border-radius: 4px;
+  }
+  .sp-orgswitch:hover { background: var(--row-hover); }
+
+  .sp-link {
+    color: inherit; text-decoration: none; cursor: default;
+    display: inline-flex; align-items: center; gap: 3px;
+  }
+
+  .sp-btn {
+    appearance: none; border: .5px solid var(--card-border);
+    padding: 6px 12px; border-radius: 7px;
+    font: inherit; font-size: 12px; font-weight: 500;
+    background: var(--card-bg); color: var(--text-1);
+    cursor: default; display: inline-flex; align-items: center; gap: 6px;
+  }
+  .sp-btn-ghost { background: var(--card-bg); }
+  .sp-btn-ghost:hover { background: var(--row-hover); }
+  .sp-btn-primary {
+    color: #fff; border-color: transparent;
+    box-shadow: 0 1px 0 rgba(0,0,0,.08), inset 0 1px 0 rgba(255,255,255,.2);
+  }
+
+  @keyframes sprocketSpin { to { transform: rotate(360deg); } }
+  @keyframes sprocketPulse {
+    0% { transform: scale(0.5); opacity: .8; }
+    100% { transform: scale(2.4); opacity: 0; }
+  }
+
+  /* Tweaks panel matches dark scheme when in dark scope */
+  .theme-dark .twk-panel {
+    background: rgba(34,34,38,.78); color: #ecebe8;
+  }
+  .theme-dark .twk-panel .twk-x { color: rgba(236,235,232,.6); }
+  .theme-dark .twk-panel .twk-x:hover { background: rgba(255,255,255,.08); color: #ecebe8; }
+  .theme-dark .twk-panel .twk-sect { color: rgba(236,235,232,.5); }
+  .theme-dark .twk-panel .twk-lbl { color: rgba(236,235,232,.72); }
+  .theme-dark .twk-panel .twk-val { color: rgba(236,235,232,.5); }
+  .theme-dark .twk-panel .twk-field { background: rgba(255,255,255,.06); border-color: rgba(255,255,255,.1); color: #ecebe8; }
+  .theme-dark .twk-panel .twk-slider { background: rgba(255,255,255,.14); }
+  .theme-dark .twk-panel .twk-seg { background: rgba(255,255,255,.08); }
+  .theme-dark .twk-panel .twk-seg-thumb { background: rgba(255,255,255,.18); }
+</style>
+</head>
+<body>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<div id="root"></div>
+
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel" src="components/icons.jsx"></script>
+<script type="text/babel" src="components/data.jsx"></script>
+<script type="text/babel" src="components/popover.jsx"></script>
+<script type="text/babel" src="components/screens.jsx"></script>
+
+<script type="text/babel">
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "dark": true,
+  "accentHue": 245,
+  "density": "comfortable",
+  "iconStateActive": "success",
+  "showRateLimit": true,
+  "filterView": "all",
+  "popoverVariant": "A"
+}/*EDITMODE-END*/;
+
+function useAccent(hue) {
+  return `oklch(0.78 0.16 ${hue})`;
+}
+
+function App() {
+  const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
+  const accent = useAccent(t.accentHue);
+  const dark = !!t.dark;
+
+  // Choose which popover renderer
+  const Popover = t.popoverVariant === 'B' ? PopoverB : PopoverA;
+
+  return (
+    <div className={dark ? 'theme-dark' : ''} style={{ background: dark ? '#0e0d10' : '#f0eee9', minHeight: '100vh', color: 'var(--text-1)' }}>
+      <DesignCanvas>
+        {/* ── Brand & Icon States ── */}
+        <DCSection id="brand" title="Sprocket" subtitle="Menu bar app for GitHub Actions · macOS 26 (Tahoe), Liquid Glass">
+          <DCArtboard id="hero" label="Hero · brand mark" width={420} height={260}>
+            <div style={{ width: '100%', height: '100%', background: dark ? '#161519' : '#faf8f4', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 14, color: 'var(--text-1)' }} className={dark ? 'theme-dark' : 'theme-light'}>
+              <div style={{ width: 56, height: 56, borderRadius: 14, background: accent, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: `0 8px 30px ${accent}55, inset 0 1px 0 rgba(255,255,255,.3)` }}>
+                <SprocketMark size={32} color="#fff" />
+              </div>
+              <div style={{ textAlign: 'center', fontFamily: '-apple-system, BlinkMacSystemFont, system-ui, sans-serif' }}>
+                <div style={{ fontSize: 26, fontWeight: 600, letterSpacing: '-0.02em', color: dark ? '#ecebe8' : '#1c1a17' }}>Sprocket</div>
+                <div style={{ fontSize: 12, color: dark ? 'rgba(236,235,232,.55)' : 'rgba(28,26,23,.55)', marginTop: 2 }}>Live GitHub Actions in your menu bar</div>
+              </div>
+            </div>
+          </DCArtboard>
+
+          <DCArtboard id="icons-light" label="Menu bar glyph · light bar" width={420} height={260}>
+            <IconStateGrid dark={false} highlight={t.iconStateActive} />
+          </DCArtboard>
+          <DCArtboard id="icons-dark" label="Menu bar glyph · dark bar" width={420} height={260}>
+            <IconStateGrid dark={true} highlight={t.iconStateActive} />
+          </DCArtboard>
+        </DCSection>
+
+        {/* ── In-context: menu bar with popover ── */}
+        <DCSection id="context" title="In context" subtitle="Click the Sprocket glyph in the menu bar — popover slides down. Currently showing Variation {variant}.">
+          <DCArtboard id="desktop-context" label={`Desktop · variation ${t.popoverVariant} · ${t.density}`} width={1100} height={720}>
+            <Desktop dark={dark} accent={accent} activeIcon={t.iconStateActive} wallpaperHue={t.accentHue}>
+              <div style={{ position: 'absolute', top: 8, right: 100 }}>
+                <PopoverCallout dark={dark} accent={accent} />
+              </div>
+              <div style={{ position: 'absolute', top: 8, right: 130 }}>
+                <Popover density={t.density} filter={t.filterView} showRateLimit={t.showRateLimit} runs={SAMPLE_RUNS} accent={accent} dark={dark} />
+              </div>
+            </Desktop>
+          </DCArtboard>
+        </DCSection>
+
+        {/* ── Popover variations ── */}
+        <DCSection id="popover" title="Popover variations" subtitle="Variation A: organized, comfortable. Variation B: grouped-by-repo, info-dense.">
+          <DCArtboard id="pop-a-comfortable" label="A · Comfortable" width={POPOVER_W} height={560}>
+            <PopoverA density="comfortable" filter="all" showRateLimit={true} runs={SAMPLE_RUNS} accent={accent} dark={dark} />
+          </DCArtboard>
+          <DCArtboard id="pop-a-compact" label="A · Compact" width={POPOVER_W} height={560}>
+            <PopoverA density="compact" filter="all" showRateLimit={true} runs={SAMPLE_RUNS} accent={accent} dark={dark} />
+          </DCArtboard>
+          <DCArtboard id="pop-a-spacious" label="A · Spacious" width={POPOVER_W} height={560}>
+            <PopoverA density="spacious" filter="all" showRateLimit={true} runs={SAMPLE_RUNS} accent={accent} dark={dark} />
+          </DCArtboard>
+          <DCArtboard id="pop-b-comfortable" label="B · Comfortable" width={POPOVER_W} height={560}>
+            <PopoverB density="comfortable" filter="all" showRateLimit={true} runs={SAMPLE_RUNS} accent={accent} dark={dark} />
+          </DCArtboard>
+          <DCArtboard id="pop-b-compact" label="B · Compact" width={POPOVER_W} height={560}>
+            <PopoverB density="compact" filter="all" showRateLimit={true} runs={SAMPLE_RUNS} accent={accent} dark={dark} />
+          </DCArtboard>
+          <DCArtboard id="pop-b-spacious" label="B · Spacious" width={POPOVER_W} height={560}>
+            <PopoverB density="spacious" filter="all" showRateLimit={true} runs={SAMPLE_RUNS} accent={accent} dark={dark} />
+          </DCArtboard>
+        </DCSection>
+
+        {/* ── Filter views (bonus side-by-side) ── */}
+        <DCSection id="filters" title="Filter views" subtitle="Same popover, different filter applied.">
+          <DCArtboard id="filter-running" label="Filter · Running" width={POPOVER_W} height={560}>
+            <PopoverA density="comfortable" filter="running" showRateLimit={true} runs={SAMPLE_RUNS} accent={accent} dark={dark} />
+          </DCArtboard>
+          <DCArtboard id="filter-failing" label="Filter · Failing" width={POPOVER_W} height={560}>
+            <PopoverA density="comfortable" filter="failing" showRateLimit={true} runs={SAMPLE_RUNS} accent={accent} dark={dark} />
+          </DCArtboard>
+        </DCSection>
+
+        {/* ── Welcome / OAuth flow ── */}
+        <DCSection id="welcome" title="Welcome flow" subtitle="Three steps: rationale → register on GitHub → paste Client ID → device code.">
+          <DCArtboard id="welcome-1" label="Step 1 · Why bring your own app" width={520} height={500}>
+            <WelcomeSheet step={1} dark={dark} accent={accent} />
+          </DCArtboard>
+          <DCArtboard id="welcome-2" label="Step 2 · Register on GitHub" width={520} height={500}>
+            <WelcomeSheet step={2} dark={dark} accent={accent} />
+          </DCArtboard>
+          <DCArtboard id="welcome-3" label="Step 3 · Paste Client ID" width={520} height={500}>
+            <WelcomeSheet step={3} dark={dark} accent={accent} />
+          </DCArtboard>
+          <DCArtboard id="device" label="Device flow · waiting" width={440} height={380}>
+            <DeviceFlowSheet accent={accent} dark={dark} />
+          </DCArtboard>
+        </DCSection>
+
+        {/* ── Settings ── */}
+        <DCSection id="settings" title="Settings" subtitle="General, Account, Repositories, Notifications, Advanced.">
+          <DCArtboard id="set-general" label="General" width={660} height={520}>
+            <SettingsWindow tab="general" dark={dark} accent={accent} />
+          </DCArtboard>
+          <DCArtboard id="set-account" label="Account" width={660} height={520}>
+            <SettingsWindow tab="account" dark={dark} accent={accent} />
+          </DCArtboard>
+          <DCArtboard id="set-repos" label="Repositories" width={660} height={520}>
+            <SettingsWindow tab="repos" dark={dark} accent={accent} />
+          </DCArtboard>
+          <DCArtboard id="set-notifs" label="Notifications" width={660} height={520}>
+            <SettingsWindow tab="notifs" dark={dark} accent={accent} />
+          </DCArtboard>
+          <DCArtboard id="set-advanced" label="Advanced" width={660} height={520}>
+            <SettingsWindow tab="advanced" dark={dark} accent={accent} />
+          </DCArtboard>
+        </DCSection>
+
+        {/* ── Notification banner ── */}
+        <DCSection id="notif" title="Notifications" subtitle="Failure-transition banner posted via UNUserNotificationCenter.">
+          <DCArtboard id="notif-banner" label="Failure notification" width={400} height={140}>
+            <NotificationBanner dark={dark} accent={accent} />
+          </DCArtboard>
+        </DCSection>
+
+      </DesignCanvas>
+
+      <TweaksPanel>
+        <TweakSection label="Appearance" />
+        <TweakToggle label="Dark mode" value={t.dark} onChange={(v) => setTweak('dark', v)} />
+        <TweakSlider label="Accent hue" value={t.accentHue} min={0} max={360} step={5} unit="°"
+          onChange={(v) => setTweak('accentHue', v)} />
+
+        <TweakSection label="Popover" />
+        <TweakRadio label="Variant" value={t.popoverVariant} options={['A', 'B']}
+          onChange={(v) => setTweak('popoverVariant', v)} />
+        <TweakRadio label="Density" value={t.density}
+          options={['compact', 'comfortable', 'spacious']}
+          onChange={(v) => setTweak('density', v)} />
+        <TweakSelect label="Filter view" value={t.filterView}
+          options={[
+            { value: 'all', label: 'All' },
+            { value: 'running', label: 'Running' },
+            { value: 'failing', label: 'Failing' },
+            { value: 'recent', label: 'Recent' },
+          ]}
+          onChange={(v) => setTweak('filterView', v)} />
+        <TweakToggle label="Show rate-limit footer" value={t.showRateLimit}
+          onChange={(v) => setTweak('showRateLimit', v)} />
+
+        <TweakSection label="Menu bar icon" />
+        <TweakSelect label="Active state" value={t.iconStateActive}
+          options={[
+            { value: 'success', label: '✓ Success (all green)' },
+            { value: 'running', label: '↻ Running' },
+            { value: 'failure', label: '✕ Failure' },
+            { value: 'auth', label: '! Auth missing' },
+            { value: 'ratelimit', label: '⏱ Rate-limited' },
+          ]}
+          onChange={(v) => setTweak('iconStateActive', v)} />
+      </TweaksPanel>
+    </div>
+  );
+}
+
+// ── Icon state grid (4 + auth + rate-limit) ──
+function IconStateGrid({ dark, highlight }) {
+  const states = [
+    { id: 'success', label: 'All green', sub: 'latest run = success' },
+    { id: 'running', label: 'Running', sub: 'queued / in_progress' },
+    { id: 'failure', label: 'Failing', sub: 'failure / timed_out' },
+    { id: 'ratelimit', label: 'Rate-limited', sub: '403 reset pending' },
+    { id: 'auth', label: 'Auth missing', sub: 'sign in required' },
+  ];
+  return (
+    <div className={dark ? 'theme-dark' : 'theme-light'} style={{ width: '100%', height: '100%', background: dark ? '#161519' : '#faf8f4', padding: 16, display: 'flex', flexDirection: 'column', gap: 10, color: 'var(--text-1)', fontFamily: '-apple-system, system-ui, sans-serif' }}>
+      <div style={{ fontSize: 11, color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 600 }}>
+        Precedence: failure → running → rate-limited → success
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8, marginTop: 4 }}>
+        {states.map(s => {
+          const isOn = s.id === highlight;
+          return (
+            <div key={s.id} style={{
+              padding: 10, borderRadius: 8,
+              background: isOn ? (dark ? 'rgba(255,255,255,.06)' : 'rgba(0,0,0,.04)') : 'transparent',
+              border: isOn ? '.5px solid var(--card-border)' : '.5px solid transparent',
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
+            }}>
+              <div style={{
+                width: 36, height: 26, borderRadius: 5,
+                background: dark ? 'rgba(20,20,22,.85)' : 'rgba(255,255,255,.85)',
+                border: '.5px solid var(--card-border)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                <MenuBarGlyph state={s.id} size={18} tone={dark ? 'dark' : 'light'} />
+              </div>
+              <div style={{ fontSize: 10.5, fontWeight: 500, textAlign: 'center', color: 'var(--text-1)' }}>{s.label}</div>
+              <div style={{ fontSize: 9.5, color: 'var(--text-3)', textAlign: 'center', lineHeight: 1.3 }}>{s.sub}</div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function PopoverCallout({ dark, accent }) {
+  // little pointer connecting menu bar to the popover (decorative)
+  return (
+    <svg width="20" height="14" viewBox="0 0 20 14" style={{ filter: dark ? 'drop-shadow(0 -2px 6px rgba(0,0,0,.3))' : 'none' }}>
+      <path d="M10 0 L20 12 L0 12 Z" fill={dark ? 'rgba(28,28,31,0.85)' : 'rgba(248,246,242,0.92)'} />
+    </svg>
+  );
+}
+
+function NotificationBanner({ dark, accent }) {
+  return (
+    <div className={dark ? 'theme-dark' : 'theme-light'} style={{ width: '100%', height: '100%', padding: 12, display: 'flex', alignItems: 'center', background: dark ? '#0e0d10' : '#e8e4dc' }}>
+      <div style={{
+        flex: 1, padding: '10px 12px', borderRadius: 12,
+        background: dark ? 'rgba(38,38,42,0.92)' : 'rgba(255,255,255,0.92)',
+        border: '.5px solid var(--surface-border)',
+        boxShadow: dark ? '0 8px 24px rgba(0,0,0,.5)' : '0 8px 24px rgba(0,0,0,.15)',
+        backdropFilter: 'blur(40px)', WebkitBackdropFilter: 'blur(40px)',
+        display: 'flex', gap: 10, alignItems: 'flex-start',
+        fontFamily: '-apple-system, system-ui, sans-serif', color: 'var(--text-1)',
+      }}>
+        <div style={{ width: 32, height: 32, borderRadius: 7, background: 'oklch(0.62 0.18 25)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <SprocketMark size={18} color="#fff" />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+            <span style={{ fontSize: 12, fontWeight: 600 }}>Sprocket</span>
+            <span style={{ fontSize: 10, color: 'var(--text-3)' }}>now</span>
+          </div>
+          <div style={{ fontSize: 12.5, fontWeight: 600, marginTop: 1 }}>foundry-co/relay</div>
+          <div style={{ fontSize: 11.5, color: 'var(--text-2)', marginTop: 1, lineHeight: 1.35 }}>
+            Workflow "Nightly · integration" failed on <span style={{ fontFamily: 'ui-monospace, monospace' }}>main</span>
+          </div>
+        </div>
+        <button className="sp-btn sp-btn-ghost" style={{ fontSize: 11, padding: '4px 10px' }}>View run</button>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

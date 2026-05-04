@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: swift --version
+
+      - name: Build
+        run: swift build -c debug
+
+      - name: Test
+        run: swift test --parallel
+
+      - name: Package app bundle
+        run: ./Scripts/package_app.sh
+        env:
+          CONFIG: release
