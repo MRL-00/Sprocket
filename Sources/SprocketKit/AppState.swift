@@ -37,6 +37,9 @@ public final class AppState {
     public let client = GitHubClient()
     public let auth = AuthStore()
 
+    private var pollTask: Task<Void, Never>?
+    private let fastLaneSeconds: Int = 15
+
     public init() {}
 
     public var menuBarState: MenuBarState {
@@ -91,9 +94,37 @@ public final class AppState {
             await client.setToken(creds.token)
             isAuthed = true
             await refresh()
+            startPolling()
         } else {
             stateLog.info("bootstrap — no token in keychain")
         }
+    }
+
+    /// Start background polling. Loops on the main actor, refreshing on the
+    /// fast lane when any run is live and on `pollingCadenceSeconds` otherwise.
+    public func startPolling() {
+        guard pollTask == nil else { return }
+        stateLog.info("polling started — base=\(self.pollingCadenceSeconds)s fast=\(self.fastLaneSeconds)s")
+        pollTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                let interval = self.nextPollInterval()
+                try? await Task.sleep(for: .seconds(interval))
+                if Task.isCancelled { return }
+                guard self.isAuthed else { return }
+                await self.refresh()
+            }
+        }
+    }
+
+    public func stopPolling() {
+        pollTask?.cancel()
+        pollTask = nil
+    }
+
+    private func nextPollInterval() -> Int {
+        let anyLive = runs.contains { $0.effective.isLive }
+        return anyLive ? min(fastLaneSeconds, pollingCadenceSeconds) : pollingCadenceSeconds
     }
 
     /// Drive the GitHub OAuth device flow end-to-end. Saves the resulting
@@ -140,6 +171,7 @@ public final class AppState {
                 pendingVerificationURL = nil
                 isAuthed = true
                 await refresh()
+                startPolling()
                 return
             } catch AuthError.authorizationPending {
                 continue
@@ -161,6 +193,7 @@ public final class AppState {
     }
 
     public func signOut() async {
+        stopPolling()
         await auth.clearCredentials()
         await client.setToken(nil)
         isAuthed = false
