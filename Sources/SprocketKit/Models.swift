@@ -169,7 +169,9 @@ public struct RateLimit: Sendable, Hashable, Codable {
 }
 
 /// Aggregate state for the menu bar glyph.
-/// Precedence: failure → running → rateLimited → success.
+/// Precedence: running → (latest completed: failure | success) → rateLimited.
+/// Old failed runs do not keep the icon red once everything live is complete —
+/// only the most recently started completed run drives green vs red.
 public enum MenuBarState: Sendable, Hashable {
     case authMissing
     case rateLimited
@@ -179,8 +181,11 @@ public enum MenuBarState: Sendable, Hashable {
 
     public static func aggregate(runs: [WorkflowRun], authed: Bool, rateLimit: RateLimit?) -> MenuBarState {
         guard authed else { return .authMissing }
-        if runs.contains(where: { $0.effective.isFailure }) { return .failure }
         if runs.contains(where: { $0.effective.isLive }) { return .running }
+        let latestCompleted = runs
+            .filter { !$0.effective.isLive }
+            .max(by: { $0.startedAt < $1.startedAt })
+        if let latest = latestCompleted, latest.effective.isFailure { return .failure }
         if let rl = rateLimit, rl.remaining == 0 { return .rateLimited }
         return .success
     }

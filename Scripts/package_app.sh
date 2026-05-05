@@ -2,8 +2,13 @@
 # Build a runnable Sprocket.app bundle from `swift build`.
 #
 # Usage:
-#   ./Scripts/package_app.sh            # release build
-#   SPROCKET_SIGNING=adhoc ./Scripts/package_app.sh  # codesign with ad-hoc identity
+#   ./Scripts/package_app.sh            # release build (signs with $APP_IDENTITY if set)
+#   APP_IDENTITY='Sprocket Development' ./Scripts/package_app.sh  # stable self-signed identity
+#   SPROCKET_SIGNING=adhoc ./Scripts/package_app.sh  # force ad-hoc signing
+#
+# A stable signing identity keeps Keychain ACLs valid across rebuilds, so the
+# user isn't prompted to allow Keychain access every time. Run
+# Scripts/setup_dev_signing.sh once to create the cert.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -43,7 +48,10 @@ cat > "$OUT/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-if [[ "${SPROCKET_SIGNING:-}" == "adhoc" ]]; then
+if [[ -n "${APP_IDENTITY:-}" ]]; then
+  echo "Signing with identity: $APP_IDENTITY"
+  codesign --force --deep --sign "$APP_IDENTITY" --options runtime --timestamp=none "$OUT"
+elif [[ "${SPROCKET_SIGNING:-}" == "adhoc" ]]; then
   codesign --force --deep --sign - "$OUT"
 fi
 

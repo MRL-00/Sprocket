@@ -67,31 +67,44 @@ struct RunMonitorTests {
 
 @Suite("Menu bar aggregation")
 struct MenuBarStateTests {
-    @Test("failure beats running beats rate-limit beats success")
+    @Test("running beats latest-completed beats rate-limit")
     func precedence() {
         let now = Date()
+        let earlier = now.addingTimeInterval(-3600)
         let url = URL(string: "https://example.com")!
-        let success = WorkflowRun(id: 1, repo: "a/b", workflowName: "w", displayTitle: "t",
+        let oldFailure = WorkflowRun(id: 1, repo: "a/b", workflowName: "w", displayTitle: "t",
+                                     branch: "main", event: "push",
+                                     status: .completed, conclusion: .failure, runNumber: 1,
+                                     actor: "x", actorHue: 0, startedAt: earlier, updatedAt: earlier,
+                                     durationSeconds: 1, htmlURL: url)
+        let recentSuccess = WorkflowRun(id: 2, repo: "a/b", workflowName: "w", displayTitle: "t",
+                                        branch: "main", event: "push",
+                                        status: .completed, conclusion: .success, runNumber: 2,
+                                        actor: "x", actorHue: 0, startedAt: now, updatedAt: now,
+                                        durationSeconds: 1, htmlURL: url)
+        let running = WorkflowRun(id: 3, repo: "a/b", workflowName: "w", displayTitle: "t",
                                   branch: "main", event: "push",
-                                  status: .completed, conclusion: .success, runNumber: 1,
+                                  status: .inProgress, conclusion: nil, runNumber: 3,
                                   actor: "x", actorHue: 0, startedAt: now, updatedAt: now,
                                   durationSeconds: 1, htmlURL: url)
-        let running = WorkflowRun(id: 2, repo: "a/b", workflowName: "w", displayTitle: "t",
-                                  branch: "main", event: "push",
-                                  status: .inProgress, conclusion: nil, runNumber: 2,
-                                  actor: "x", actorHue: 0, startedAt: now, updatedAt: now,
-                                  durationSeconds: 1, htmlURL: url)
-        let failure = WorkflowRun(id: 3, repo: "a/b", workflowName: "w", displayTitle: "t",
-                                  branch: "main", event: "push",
-                                  status: .completed, conclusion: .failure, runNumber: 3,
-                                  actor: "x", actorHue: 0, startedAt: now, updatedAt: now,
-                                  durationSeconds: 1, htmlURL: url)
+        let later = now.addingTimeInterval(60)
+        let recentFailure = WorkflowRun(id: 4, repo: "a/b", workflowName: "w", displayTitle: "t",
+                                        branch: "main", event: "push",
+                                        status: .completed, conclusion: .failure, runNumber: 4,
+                                        actor: "x", actorHue: 0, startedAt: later, updatedAt: later,
+                                        durationSeconds: 1, htmlURL: url)
 
-        #expect(MenuBarState.aggregate(runs: [success, running, failure], authed: true, rateLimit: nil) == .failure)
-        #expect(MenuBarState.aggregate(runs: [success, running], authed: true, rateLimit: nil) == .running)
+        // Running beats everything else, even concurrent failures.
+        #expect(MenuBarState.aggregate(runs: [recentSuccess, running, oldFailure], authed: true, rateLimit: nil) == .running)
+        // No live runs: the most recent completed run drives the icon.
+        // Old failure + newer success → green (the old red doesn't stick).
+        #expect(MenuBarState.aggregate(runs: [oldFailure, recentSuccess], authed: true, rateLimit: nil) == .success)
+        // Newer failure wins.
+        #expect(MenuBarState.aggregate(runs: [recentSuccess, recentFailure], authed: true, rateLimit: nil) == .failure)
+
         let exhausted = RateLimit(limit: 5_000, remaining: 0, resetAt: now)
-        #expect(MenuBarState.aggregate(runs: [success], authed: true, rateLimit: exhausted) == .rateLimited)
-        #expect(MenuBarState.aggregate(runs: [success], authed: true, rateLimit: nil) == .success)
+        #expect(MenuBarState.aggregate(runs: [recentSuccess], authed: true, rateLimit: exhausted) == .rateLimited)
+        #expect(MenuBarState.aggregate(runs: [recentSuccess], authed: true, rateLimit: nil) == .success)
         #expect(MenuBarState.aggregate(runs: [], authed: false, rateLimit: nil) == .authMissing)
     }
 }
