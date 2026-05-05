@@ -1,7 +1,7 @@
 # Sprocket
 
+![alt text](<CleanShot 2026-05-05 at 13.04.10.png>)
 **CI status, without the tabs.**
-
 Sprocket is a tiny macOS menu bar app that watches GitHub Actions across every
 repo you can see — personal, org, collaborator. One glyph reflects the worst
 current state across every watched repo (failure → running → rate-limited →
@@ -67,36 +67,4 @@ macOS Keychain under `nz.matt.sprocket.github.token`.
 - `Tests/SprocketKitTests/` — Swift Testing suites
 - `Scripts/package_app.sh` — wraps `swift build` output into `Sprocket.app`
 
-## CLI
-
-```
-sprocket status        Print the same summary the popover shows
-sprocket list          Print recent runs across watched repos
-sprocket watch         Long-run polling, prints state transitions
-sprocket auth status   Show signed-in user
-sprocket auth login    Run device flow
-sprocket auth logout   Clear credentials
-```
-
-## Sharing
-
-Drop straight into a tweet or post:
-
-> I built Sprocket — a tiny macOS menu bar app that shows GitHub Actions status
-> across every repo you can see. Live polling. Failure-first notifications.
-> Open source. Bring your own OAuth app — your token never leaves your Mac.
-
-> If you tab into GitHub fifty times a day to check if CI passed, Sprocket is
-> for you. One menu bar glyph reflects the worst current state across every
-> repo. Click for the full list. Get notified the moment something turns red.
-> macOS 26 · Apple Silicon · MIT.
-
-For HN / technical audiences:
-
-> Sprocket: GitHub Actions in the menu bar.
->
-> · SwiftUI MenuBarExtra, Swift 6 strict concurrency
-> · ETag-aware polling, 15 s fast lane on running jobs
-> · Bring-your-own OAuth app — no shared rate-limit pool
-> · CLI shares Keychain with the app
-> · Liquid Glass on macOS 26
+## CLI (Coming Soon...)
