@@ -27,6 +27,21 @@ rate-limit footer that's always visible.
 - Apple Silicon
 - Swift 6.0 toolchain (Xcode 16+)
 
+## Install
+
+Download `Sprocket-<version>-macos.zip` from the
+[latest GitHub release][releases], unzip it, and move `Sprocket.app` to
+`/Applications`.
+
+Or install with Homebrew:
+
+```sh
+brew tap MRL-00/Sprocket https://github.com/MRL-00/Sprocket
+brew install --cask sprocket
+```
+
+[releases]: https://github.com/MRL-00/Sprocket/releases/latest
+
 ## Build
 
 ```sh
@@ -39,9 +54,37 @@ Build a runnable `Sprocket.app` bundle:
 
 ```sh
 ./Scripts/package_app.sh                       # release
+VERSION=0.2.0 ./Scripts/package_app.sh         # release with bundle version
 SPROCKET_SIGNING=adhoc ./Scripts/package_app.sh # ad-hoc codesign
 open build/Sprocket.app
 ```
+
+## Release
+
+GitHub releases are created from version tags:
+
+```sh
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+The release workflow builds `Sprocket.app`, archives it as
+`Sprocket-0.2.0-macos.zip`, uploads the zip and checksum to GitHub Releases,
+generates release notes, and commits the updated Homebrew cask checksum back to
+`main`.
+
+To update the cask by hand from a local artifact:
+
+```sh
+./Scripts/update_cask.sh 0.2.0 build/Sprocket-0.2.0-macos.zip
+git add Casks/sprocket.rb
+git commit -m "Update Homebrew cask to 0.2.0"
+git push
+```
+
+For public distribution, replace ad-hoc signing in the release workflow with a
+Developer ID certificate and notarization so users do not see Gatekeeper
+warnings.
 
 ## Mock mode
 
