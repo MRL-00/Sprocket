@@ -1,6 +1,6 @@
 # Sprocket
 
-![alt text](<CleanShot 2026-05-05 at 13.04.10.png>)
+![alt text](<marketing.png>)
 **CI status, without the tabs.**
 Sprocket is a tiny macOS menu bar app that watches GitHub Actions across every
 repo you can see — personal, org, collaborator. One glyph reflects the worst

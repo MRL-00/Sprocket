@@ -46,7 +46,7 @@ public final class AppState {
     private var pollTask: Task<Void, Never>?
     private let fastLaneSeconds: Int = 15
     private var lastActionsUsageRefresh: Date?
-    private var lastActionsUsageOwnerKey: String?
+    private var lastActionsUsageScopeKey: String?
 
     public var isPolling: Bool { pollTask != nil }
 
@@ -90,7 +90,7 @@ public final class AppState {
         self.rateLimit = MockData.rateLimit
         self.actionsUsage = MockData.actionsUsage
         self.lastActionsUsageRefresh = Date()
-        self.lastActionsUsageOwnerKey = "user:\(MockData.user.login)"
+        self.lastActionsUsageScopeKey = "mock"
         self.lastRefresh = Date()
         self.isAuthed = true
         self.mockMode = true
@@ -215,7 +215,7 @@ public final class AppState {
         rateLimit = nil
         actionsUsage = nil
         lastActionsUsageRefresh = nil
-        lastActionsUsageOwnerKey = nil
+        lastActionsUsageScopeKey = nil
     }
 
     /// Fetch user, recent repos, and recent runs.
@@ -241,11 +241,11 @@ public final class AppState {
             let events = await monitor.ingest(sorted)
             self.runs = sorted
             self.rateLimit = await client.rateLimit
-            let owner = actionsUsageOwner(for: me)
-            if shouldRefreshActionsUsage(for: owner) {
-                self.actionsUsage = try await client.fetchActionsUsage(for: owner.name, isOrg: owner.isOrg)
+            let owners = actionsUsageOwners(for: me, repositories: repos)
+            if shouldRefreshActionsUsage(for: owners) {
+                self.actionsUsage = await fetchAggregateActionsUsage(for: owners)
                 self.lastActionsUsageRefresh = Date()
-                self.lastActionsUsageOwnerKey = actionsUsageOwnerKey(owner)
+                self.lastActionsUsageScopeKey = actionsUsageScopeKey(owners)
             }
             self.lastRefresh = Date()
             stateLog.info("refresh OK — \(allRuns.count) runs, \(events.count) state changes")
@@ -256,21 +256,41 @@ public final class AppState {
         }
     }
 
-    private func shouldRefreshActionsUsage(for owner: (name: String, isOrg: Bool)) -> Bool {
-        if lastActionsUsageOwnerKey != actionsUsageOwnerKey(owner) { return true }
+    private func shouldRefreshActionsUsage(for owners: [ActionsUsageOwner]) -> Bool {
+        if lastActionsUsageScopeKey != actionsUsageScopeKey(owners) { return true }
         guard let lastActionsUsageRefresh else { return true }
         return Date().timeIntervalSince(lastActionsUsageRefresh) >= 60 * 60
     }
 
-    private func actionsUsageOwner(for user: GitHubUser) -> (name: String, isOrg: Bool) {
+    private func actionsUsageOwners(for user: GitHubUser, repositories: [Repository]) -> [ActionsUsageOwner] {
         if orgScope != "All organizations" && orgScope != "Personal" {
-            return (orgScope, true)
+            return [ActionsUsageOwner(name: orgScope, isOrg: true)]
         }
-        return (user.login, false)
+        let orgOwners = Set(
+            repositories
+                .map(\.org)
+                .filter { $0 != "Personal" && $0 != user.login }
+        )
+        return [ActionsUsageOwner(name: user.login, isOrg: false)]
+            + orgOwners.sorted().map { ActionsUsageOwner(name: $0, isOrg: true) }
     }
 
-    private func actionsUsageOwnerKey(_ owner: (name: String, isOrg: Bool)) -> String {
-        "\(owner.isOrg ? "org" : "user"):\(owner.name)"
+    private func fetchAggregateActionsUsage(for owners: [ActionsUsageOwner]) async -> ActionsUsage? {
+        var usages: [ActionsUsage] = []
+        for owner in owners {
+            do {
+                if let usage = try await client.fetchActionsUsage(for: owner.name, isOrg: owner.isOrg) {
+                    usages.append(usage)
+                }
+            } catch {
+                stateLog.info("actions usage failed for \(owner.key) — \(error)")
+            }
+        }
+        return ActionsUsage.aggregate(usages)
+    }
+
+    private func actionsUsageScopeKey(_ owners: [ActionsUsageOwner]) -> String {
+        owners.map(\.key).joined(separator: "|")
     }
 
     private func copyToPasteboard(_ string: String) {
@@ -278,5 +298,14 @@ public final class AppState {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(string, forType: .string)
         #endif
+    }
+}
+
+private struct ActionsUsageOwner: Sendable, Hashable {
+    let name: String
+    let isOrg: Bool
+
+    var key: String {
+        "\(isOrg ? "org" : "user"):\(name)"
     }
 }

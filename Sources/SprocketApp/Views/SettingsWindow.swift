@@ -119,7 +119,7 @@ private struct AccountTab: View {
         ("repo",      "Read & write across repos you can access"),
         ("workflow",  "Re-run / cancel runs"),
         ("read:org",  "Discover repos in your orgs"),
-        ("read:user", "Your avatar & login"),
+        ("user",      "Your avatar, login, and Actions billing usage"),
     ]
 }
 

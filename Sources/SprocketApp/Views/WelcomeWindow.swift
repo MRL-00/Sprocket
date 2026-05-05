@@ -32,7 +32,7 @@ struct WelcomeWindow: View {
         }
         .background(.regularMaterial)
         .onChange(of: state.isAuthed) { _, authed in
-            if authed { dismiss() }
+            if authed { closeWelcomeWindow() }
         }
     }
 
@@ -82,7 +82,12 @@ struct WelcomeWindow: View {
                     if state.welcomeStep < 3 {
                         state.welcomeStep += 1
                     } else {
-                        Task { await state.signIn(clientID: state.clientIDDraft) }
+                        Task {
+                            await state.signIn(clientID: state.clientIDDraft)
+                            if state.isAuthed {
+                                closeWelcomeWindow()
+                            }
+                        }
                     }
                 }
                 .buttonStyle(.borderedProminent)
@@ -109,6 +114,13 @@ struct WelcomeWindow: View {
         }
         return false
     }
+
+    private func closeWelcomeWindow() {
+        dismiss()
+        NSApp.windows
+            .first { $0.title == "Welcome" }
+            .map { $0.close() }
+    }
 }
 
 /// GitHub Client IDs:
@@ -126,7 +138,7 @@ private struct WelcomeStep1: View {
                 .font(.system(size: 22, weight: .semibold))
                 .kerning(-0.4)
                 .lineLimit(nil)
-            Text("Sprocket talks to GitHub on your behalf. Rather than sharing one OAuth app across all Sprocket users — which gets rate-limited and is a security smell — you'll register your own. It takes about 90 seconds. Your token never leaves this Mac.")
+            Text("Sprocket talks to GitHub on your behalf to monitor workflow runs and show this month's Actions minutes. You'll register your own OAuth app so the token is issued directly to this Mac and never leaves it.")
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
                 .lineSpacing(2)
@@ -136,8 +148,8 @@ private struct WelcomeStep1: View {
                            detail:"Stored in macOS Keychain, never on disk in plaintext.")
                 BulletCard(icon: "globe", title: "Direct to GitHub",
                            detail:"No third-party server. Polling only — no analytics.")
-                BulletCard(icon: "arrow.triangle.branch", title: "Your rate limit",
-                           detail:"Your own 5,000/hr budget, not shared.")
+                BulletCard(icon: "clock.badge.checkmark", title: "CI minutes",
+                           detail:"Shows monthly Actions usage against your included budget.")
                 BulletCard(icon: "gearshape", title: "One-time setup",
                            detail:"Reused across sign-outs. Reconfigure anytime.")
             }
@@ -147,7 +159,7 @@ private struct WelcomeStep1: View {
                 Image(systemName: "lock")
                     .font(.system(size: 12))
                     .foregroundStyle(Color.sprocketAccent)
-                Text("Sprocket will request `repo`, `workflow`, `read:org`, and `read:user`.")
+                Text("Sprocket will request `repo`, `workflow`, `read:org`, and `user`.")
                     .font(.system(size: 11.5))
                     .foregroundStyle(.secondary)
             }
@@ -349,6 +361,20 @@ private struct WelcomeStep3: View {
                 }
                 .font(.system(size: 11))
                 .foregroundStyle(Color.sprocketSuccess)
+            }
+
+            if let err = state.signInError {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.system(size: 11, weight: .medium))
+                    Text(err)
+                        .font(.system(size: 11))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .foregroundStyle(Color.sprocketFailure)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(Color.sprocketFailure.opacity(0.10), in: RoundedRectangle(cornerRadius: 7))
             }
 
             VStack(alignment: .leading, spacing: 6) {

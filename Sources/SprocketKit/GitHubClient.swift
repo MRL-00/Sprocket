@@ -78,7 +78,7 @@ public actor GitHubClient {
         }
     }
 
-    public func requestDeviceCode(scope: String = "repo workflow read:org read:user") async throws -> DeviceCode {
+    public func requestDeviceCode(scope: String = "repo workflow read:org user") async throws -> DeviceCode {
         guard let clientID = config.clientID else { throw AuthError.other("Missing Client ID") }
         var req = URLRequest(url: URL(string: "https://github.com/login/device/code")!)
         req.httpMethod = "POST"
@@ -200,19 +200,80 @@ public actor GitHubClient {
 
     public func fetchActionsUsage(for owner: String, isOrg: Bool) async throws -> ActionsUsage? {
         let encodedOwner = owner.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? owner
-        let path = isOrg
-            ? "/orgs/\(encodedOwner)/settings/billing/actions"
-            : "/users/\(encodedOwner)/settings/billing/actions"
-        let req = makeRequest(path: path)
+        let summaryPath = isOrg
+            ? "/orgs/\(encodedOwner)/settings/billing/usage/summary?product=actions"
+            : "/users/\(encodedOwner)/settings/billing/usage/summary?product=actions"
+        let req = makeRequest(path: summaryPath)
         let (data, resp) = try await session.data(for: req)
         guard let http = resp as? HTTPURLResponse else { throw AuthError.invalidResponse }
         if http.statusCode == 403 || http.statusCode == 404 {
             absorbRateLimit(resp)
             return nil
         }
+        if http.statusCode == 410 {
+            return try await fetchLegacyActionsUsage(for: encodedOwner, isOrg: isOrg)
+        }
+        try check(resp, data: data)
+        absorbRateLimit(resp)
+        return try decodeActionsUsageSummary(data, isOrg: isOrg)
+    }
+
+    private func fetchLegacyActionsUsage(for encodedOwner: String, isOrg: Bool) async throws -> ActionsUsage? {
+        let path = isOrg
+            ? "/orgs/\(encodedOwner)/settings/billing/actions"
+            : "/users/\(encodedOwner)/settings/billing/actions"
+        let req = makeRequest(path: path)
+        let (data, resp) = try await session.data(for: req)
+        guard let http = resp as? HTTPURLResponse else { throw AuthError.invalidResponse }
+        if http.statusCode == 403 || http.statusCode == 404 || http.statusCode == 410 {
+            absorbRateLimit(resp)
+            return nil
+        }
         try check(resp, data: data)
         absorbRateLimit(resp)
         return try JSONDecoder().decode(ActionsUsage.self, from: data)
+    }
+
+    private func decodeActionsUsageSummary(_ data: Data, isOrg: Bool) throws -> ActionsUsage {
+        struct Summary: Decodable {
+            let usageItems: [Item]
+
+            struct Item: Decodable {
+                let product: String?
+                let sku: String?
+                let unitType: String?
+                let grossQuantity: Double?
+                let netQuantity: Double?
+                let quantity: Double?
+            }
+        }
+
+        let summary = try JSONDecoder().decode(Summary.self, from: data)
+        var total = 0.0
+        var paid = 0.0
+        var breakdown: [String: Double] = [:]
+
+        for item in summary.usageItems where item.unitType?.lowercased() == "minutes" {
+            let used = item.grossQuantity ?? item.quantity ?? 0
+            let paidUsed = item.netQuantity ?? 0
+            total += used
+            paid += paidUsed
+            breakdown[actionsRunnerKey(for: item.sku), default: 0] += used
+        }
+
+        return ActionsUsage(
+            totalMinutesUsed: Int(total.rounded(.up)),
+            includedMinutes: isOrg ? 3_000 : 2_000,
+            paidMinutesUsed: Int(paid.rounded(.up)),
+            breakdown: breakdown.mapValues { Int($0.rounded(.up)) }
+        )
+    }
+
+    private func actionsRunnerKey(for sku: String?) -> String {
+        let normalized = (sku ?? "").lowercased()
+        if normalized.contains("macos") || normalized.contains("mac") { return "MACOS" }
+        if normalized.contains("windows") { return "WINDOWS" }
+        return "UBUNTU"
     }
 
     private func makeRequest(path: String) -> URLRequest {

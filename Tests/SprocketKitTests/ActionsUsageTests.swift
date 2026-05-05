@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import SprocketKit
 
-@Suite("Actions usage")
+@Suite("Actions usage", .serialized)
 struct ActionsUsageTests {
     @Test("decodes GitHub billing response")
     func decodesBillingResponse() throws {
@@ -43,13 +43,38 @@ struct ActionsUsageTests {
         #expect(unlimited.fraction == 0)
     }
 
+    @Test("aggregates multiple billing accounts")
+    func aggregatesMultipleAccounts() throws {
+        let personal = ActionsUsage(
+            totalMinutesUsed: 7,
+            includedMinutes: 2_000,
+            paidMinutesUsed: 0,
+            breakdown: ["UBUNTU": 7]
+        )
+        let org = ActionsUsage(
+            totalMinutesUsed: 412,
+            includedMinutes: 3_000,
+            paidMinutesUsed: 12,
+            breakdown: ["UBUNTU": 200, "MACOS": 212]
+        )
+
+        let aggregate = try #require(ActionsUsage.aggregate([personal, org]))
+        #expect(aggregate.totalMinutesUsed == 419)
+        #expect(aggregate.includedMinutes == 5_000)
+        #expect(aggregate.paidMinutesUsed == 12)
+        #expect(aggregate.breakdown["UBUNTU"] == 207)
+        #expect(aggregate.breakdown["MACOS"] == 212)
+        #expect(ActionsUsage.aggregate([]) == nil)
+    }
+
     @Test("billing access denial returns nil")
     func billingAccessDeniedReturnsNil() async throws {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [StubURLProtocol.self]
         let session = URLSession(configuration: config)
         StubURLProtocol.handler = { request in
-            #expect(request.url?.path == "/users/mattnz/settings/billing/actions")
+            #expect(request.url?.path == "/users/mattnz/settings/billing/usage/summary")
+            #expect(request.url?.query == "product=actions")
             let response = HTTPURLResponse(
                 url: request.url!,
                 statusCode: 403,
@@ -70,6 +95,67 @@ struct ActionsUsageTests {
 
         let usage = try await client.fetchActionsUsage(for: "mattnz", isOrg: false)
         #expect(usage == nil)
+    }
+
+    @Test("decodes current billing usage summary endpoint")
+    func decodesBillingUsageSummaryEndpoint() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [StubURLProtocol.self]
+        let session = URLSession(configuration: config)
+        StubURLProtocol.handler = { request in
+            #expect(request.url?.path == "/users/mattnz/settings/billing/usage/summary")
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: [
+                    "X-RateLimit-Remaining": "4999",
+                    "X-RateLimit-Limit": "5000",
+                    "X-RateLimit-Reset": "1770000000",
+                ]
+            )!
+            let body = """
+            {
+              "timePeriod": { "year": 2026, "month": 5 },
+              "user": "mattnz",
+              "product": "Actions",
+              "usageItems": [
+                {
+                  "product": "Actions",
+                  "sku": "actions_linux",
+                  "grossQuantity": 7.0,
+                  "discountQuantity": 7.0,
+                  "netQuantity": 0.0,
+                  "grossAmount": 0.042,
+                  "discountAmount": 0.042,
+                  "netAmount": 0.0,
+                  "pricePerUnit": 0.006,
+                  "unitType": "minutes"
+                },
+                {
+                  "product": "Actions",
+                  "sku": "actions_macos",
+                  "grossQuantity": 2.2,
+                  "netQuantity": 1.2,
+                  "unitType": "minutes"
+                }
+              ]
+            }
+            """
+            return (Data(body.utf8), response)
+        }
+
+        let client = GitHubClient(
+            config: GitHubClientConfig(baseURL: URL(string: "https://api.example.test")!),
+            session: session
+        )
+
+        let usage = try #require(try await client.fetchActionsUsage(for: "mattnz", isOrg: false))
+        #expect(usage.totalMinutesUsed == 10)
+        #expect(usage.includedMinutes == 2_000)
+        #expect(usage.paidMinutesUsed == 2)
+        #expect(usage.breakdown["UBUNTU"] == 7)
+        #expect(usage.breakdown["MACOS"] == 3)
     }
 }
 

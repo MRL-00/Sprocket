@@ -190,6 +190,22 @@ public struct ActionsUsage: Sendable, Hashable, Codable {
         totalMinutesUsed > includedMinutes
     }
 
+    public static func aggregate(_ usages: [ActionsUsage]) -> ActionsUsage? {
+        guard !usages.isEmpty else { return nil }
+        var breakdown: [String: Int] = [:]
+        for usage in usages {
+            for (key, value) in usage.breakdown {
+                breakdown[key, default: 0] += value
+            }
+        }
+        return ActionsUsage(
+            totalMinutesUsed: usages.reduce(0) { $0 + $1.totalMinutesUsed },
+            includedMinutes: usages.reduce(0) { $0 + $1.includedMinutes },
+            paidMinutesUsed: usages.reduce(0) { $0 + $1.paidMinutesUsed },
+            breakdown: breakdown
+        )
+    }
+
     enum CodingKeys: String, CodingKey {
         case totalMinutesUsed = "total_minutes_used"
         case includedMinutes = "included_minutes"
