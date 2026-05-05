@@ -16,11 +16,20 @@ public final class AppState {
     public var repositories: [Repository] = []
     public var rateLimit: RateLimit?
     public var actionsUsage: ActionsUsage?
+    public var actionsUsageAccounts: [ActionsUsageAccount] = []
     public var lastRefresh: Date?
     public var density: Density = .comfortable
     public var filter: FilterTab = .all
     public var freeTextFilter: String = ""
-    public var orgScope: String = "All organizations"
+    public var orgScope: String = "All accounts" {
+        didSet {
+            guard oldValue != orgScope else { return }
+            applyActionsUsageForCurrentScope()
+            if isAuthed && shouldFetchActionsUsageForCurrentScope {
+                Task { await refreshActionsUsageForCurrentScope() }
+            }
+        }
+    }
     public var isAuthed: Bool = false
     public var welcomeStep: Int = 1
     public var clientIDDraft: String = ""
@@ -89,6 +98,7 @@ public final class AppState {
         self.repositories = MockData.repositories
         self.rateLimit = MockData.rateLimit
         self.actionsUsage = MockData.actionsUsage
+        self.actionsUsageAccounts = [ActionsUsageAccount(name: MockData.user.login, isOrg: false, usage: MockData.actionsUsage)]
         self.lastActionsUsageRefresh = Date()
         self.lastActionsUsageScopeKey = "mock"
         self.lastRefresh = Date()
@@ -214,6 +224,7 @@ public final class AppState {
         repositories = []
         rateLimit = nil
         actionsUsage = nil
+        actionsUsageAccounts = []
         lastActionsUsageRefresh = nil
         lastActionsUsageScopeKey = nil
     }
@@ -241,12 +252,7 @@ public final class AppState {
             let events = await monitor.ingest(sorted)
             self.runs = sorted
             self.rateLimit = await client.rateLimit
-            let owners = actionsUsageOwners(for: me, repositories: repos)
-            if shouldRefreshActionsUsage(for: owners) {
-                self.actionsUsage = await fetchAggregateActionsUsage(for: owners)
-                self.lastActionsUsageRefresh = Date()
-                self.lastActionsUsageScopeKey = actionsUsageScopeKey(owners)
-            }
+            await refreshActionsUsageForCurrentScopeIfNeeded()
             self.lastRefresh = Date()
             stateLog.info("refresh OK — \(allRuns.count) runs, \(events.count) state changes")
             if !events.isEmpty { onStateChanges?(events) }
@@ -262,8 +268,41 @@ public final class AppState {
         return Date().timeIntervalSince(lastActionsUsageRefresh) >= 60 * 60
     }
 
+    private var shouldFetchActionsUsageForCurrentScope: Bool {
+        guard let user else { return false }
+        let owners = actionsUsageOwners(for: user, repositories: repositories)
+        let known = Set(actionsUsageAccounts.map(\.id))
+        return owners.contains { !known.contains($0.key) }
+    }
+
+    private func refreshActionsUsageForCurrentScopeIfNeeded() async {
+        guard let user else { return }
+        let owners = actionsUsageOwners(for: user, repositories: repositories)
+        if shouldRefreshActionsUsage(for: owners) {
+            await refreshActionsUsage(for: owners)
+        } else {
+            applyActionsUsageForCurrentScope()
+        }
+    }
+
+    private func refreshActionsUsageForCurrentScope() async {
+        guard let user else { return }
+        await refreshActionsUsage(for: actionsUsageOwners(for: user, repositories: repositories))
+    }
+
+    private func refreshActionsUsage(for owners: [ActionsUsageOwner]) async {
+        let accounts = await fetchActionsUsageAccounts(for: owners)
+        mergeActionsUsageAccounts(accounts)
+        applyActionsUsageForCurrentScope()
+        self.lastActionsUsageRefresh = Date()
+        self.lastActionsUsageScopeKey = actionsUsageScopeKey(owners)
+    }
+
     private func actionsUsageOwners(for user: GitHubUser, repositories: [Repository]) -> [ActionsUsageOwner] {
-        if orgScope != "All organizations" && orgScope != "Personal" {
+        if orgScope == "Personal" || orgScope == user.login {
+            return [ActionsUsageOwner(name: user.login, isOrg: false)]
+        }
+        if orgScope != "All accounts" && orgScope != "All organizations" && orgScope != "Personal" {
             return [ActionsUsageOwner(name: orgScope, isOrg: true)]
         }
         let orgOwners = Set(
@@ -275,18 +314,38 @@ public final class AppState {
             + orgOwners.sorted().map { ActionsUsageOwner(name: $0, isOrg: true) }
     }
 
-    private func fetchAggregateActionsUsage(for owners: [ActionsUsageOwner]) async -> ActionsUsage? {
-        var usages: [ActionsUsage] = []
+    private func fetchActionsUsageAccounts(for owners: [ActionsUsageOwner]) async -> [ActionsUsageAccount] {
+        var accounts: [ActionsUsageAccount] = []
         for owner in owners {
             do {
                 if let usage = try await client.fetchActionsUsage(for: owner.name, isOrg: owner.isOrg) {
-                    usages.append(usage)
+                    accounts.append(ActionsUsageAccount(name: owner.name, isOrg: owner.isOrg, usage: usage))
                 }
             } catch {
                 stateLog.info("actions usage failed for \(owner.key) — \(error)")
             }
         }
-        return ActionsUsage.aggregate(usages)
+        return accounts
+    }
+
+    private func mergeActionsUsageAccounts(_ accounts: [ActionsUsageAccount]) {
+        var keyed = Dictionary(uniqueKeysWithValues: actionsUsageAccounts.map { ($0.id, $0) })
+        for account in accounts {
+            keyed[account.id] = account
+        }
+        actionsUsageAccounts = keyed.values.sorted { $0.id < $1.id }
+    }
+
+    private func applyActionsUsageForCurrentScope() {
+        guard let user else {
+            actionsUsage = nil
+            return
+        }
+        let ownerKeys = Set(actionsUsageOwners(for: user, repositories: repositories).map(\.key))
+        let usages = actionsUsageAccounts
+            .filter { ownerKeys.contains($0.id) }
+            .map(\.usage)
+        actionsUsage = ActionsUsage.aggregate(usages)
     }
 
     private func actionsUsageScopeKey(_ owners: [ActionsUsageOwner]) -> String {

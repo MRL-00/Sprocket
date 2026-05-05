@@ -214,6 +214,26 @@ public struct ActionsUsage: Sendable, Hashable, Codable {
     }
 }
 
+public struct ActionsUsageAccount: Sendable, Hashable, Codable, Identifiable {
+    public var name: String
+    public var isOrg: Bool
+    public var usage: ActionsUsage
+
+    public init(name: String, isOrg: Bool, usage: ActionsUsage) {
+        self.name = name
+        self.isOrg = isOrg
+        self.usage = usage
+    }
+
+    public var id: String {
+        "\(isOrg ? "org" : "user"):\(name)"
+    }
+
+    public var displayName: String {
+        isOrg ? name : "\(name) personal"
+    }
+}
+
 /// Aggregate state for the menu bar glyph.
 /// Precedence: running → (latest completed: failure | success) → rateLimited.
 /// Old failed runs do not keep the icon red once everything live is complete —

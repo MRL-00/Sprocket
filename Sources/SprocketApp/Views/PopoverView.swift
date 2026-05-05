@@ -280,10 +280,15 @@ private struct OrgSwitcherRow: View {
                 .font(.system(size: 10.5))
                 .foregroundStyle(.secondary)
             Menu {
-                Button("All organizations") { state.orgScope = "All organizations" }
+                Button("All accounts") { state.orgScope = "All accounts" }
                 Divider()
+                if let login = state.user?.login {
+                    Button("\(login) · Personal") { state.orgScope = login }
+                } else {
+                    Button("Personal account") { state.orgScope = "Personal" }
+                }
                 ForEach(orgs, id: \.self) { org in
-                    Button(org) { state.orgScope = org }
+                    Button("\(org) · Organization") { state.orgScope = org }
                 }
             } label: {
                 HStack(spacing: 4) {
@@ -309,7 +314,14 @@ private struct OrgSwitcherRow: View {
     }
 
     private var orgs: [String] {
-        Array(Set(state.repositories.map(\.org))).sorted()
+        Array(
+            Set(
+                state.repositories
+                    .map(\.org)
+                    .filter { $0 != "Personal" && $0 != state.user?.login }
+            )
+        )
+        .sorted()
     }
 }
 
@@ -340,7 +352,7 @@ private struct RunListView: View {
 
     private var filtered: [WorkflowRun] {
         let scoped: [WorkflowRun]
-        if state.orgScope == "All organizations" {
+        if state.orgScope == "All organizations" || state.orgScope == "All accounts" {
             scoped = state.visibleRuns
         } else {
             scoped = state.visibleRuns.filter { $0.repo.hasPrefix(state.orgScope + "/") }
@@ -436,10 +448,33 @@ private struct FooterRow: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
         .background(Color.primary.opacity(0.02))
+        .help(actionsUsageHelp)
     }
 
     private func actionsUsageText(_ usage: ActionsUsage) -> String {
         "\(Formatting.compactNumber(usage.totalMinutesUsed)) / \(Formatting.compactNumber(usage.includedMinutes)) CI minutes this month"
+    }
+
+    private var actionsUsageHelp: String {
+        let accounts = scopedAccounts
+        guard !accounts.isEmpty else {
+            return "GitHub Actions billing usage is unavailable for this account."
+        }
+        return accounts
+            .map { account in
+                "\(account.displayName): \(Formatting.compactNumber(account.usage.totalMinutesUsed)) / \(Formatting.compactNumber(account.usage.includedMinutes)) minutes"
+            }
+            .joined(separator: "\n")
+    }
+
+    private var scopedAccounts: [ActionsUsageAccount] {
+        if state.orgScope == "All accounts" || state.orgScope == "All organizations" {
+            return state.actionsUsageAccounts
+        }
+        if state.orgScope == "Personal" || state.orgScope == state.user?.login {
+            return state.actionsUsageAccounts.filter { !$0.isOrg }
+        }
+        return state.actionsUsageAccounts.filter { $0.isOrg && $0.name == state.orgScope }
     }
 }
 
