@@ -7,9 +7,11 @@ func runStatus() async {
     let failing = runs.filter { $0.effective.isFailure }.count
     let success = runs.filter { $0.effective == .success }.count
     let rl = MockData.rateLimit
+    let actionsUsage = MockData.actionsUsage
     print("Sprocket — \(MockData.user.login)")
     print("  \(success) green · \(live) running · \(failing) failing")
     print("  rate limit: \(rl.remaining)/\(rl.limit), resets at \(rl.resetAt)")
+    print("  CI minutes: \(actionsUsage.totalMinutesUsed)/\(actionsUsage.includedMinutes) this month")
 }
 
 func runList() {

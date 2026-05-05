@@ -168,6 +168,36 @@ public struct RateLimit: Sendable, Hashable, Codable {
     }
 }
 
+public struct ActionsUsage: Sendable, Hashable, Codable {
+    public var totalMinutesUsed: Int
+    public var includedMinutes: Int
+    public var paidMinutesUsed: Int
+    public var breakdown: [String: Int]
+
+    public init(totalMinutesUsed: Int, includedMinutes: Int, paidMinutesUsed: Int, breakdown: [String: Int]) {
+        self.totalMinutesUsed = totalMinutesUsed
+        self.includedMinutes = includedMinutes
+        self.paidMinutesUsed = paidMinutesUsed
+        self.breakdown = breakdown
+    }
+
+    public var fraction: Double {
+        guard includedMinutes > 0 else { return 0 }
+        return Double(totalMinutesUsed) / Double(includedMinutes)
+    }
+
+    public var isOverBudget: Bool {
+        totalMinutesUsed > includedMinutes
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case totalMinutesUsed = "total_minutes_used"
+        case includedMinutes = "included_minutes"
+        case paidMinutesUsed = "total_paid_minutes_used"
+        case breakdown = "minutes_used_breakdown"
+    }
+}
+
 /// Aggregate state for the menu bar glyph.
 /// Precedence: running → (latest completed: failure | success) → rateLimited.
 /// Old failed runs do not keep the icon red once everything live is complete —

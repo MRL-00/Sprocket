@@ -15,6 +15,7 @@ public final class AppState {
     public var runs: [WorkflowRun] = []
     public var repositories: [Repository] = []
     public var rateLimit: RateLimit?
+    public var actionsUsage: ActionsUsage?
     public var lastRefresh: Date?
     public var density: Density = .comfortable
     public var filter: FilterTab = .all
@@ -44,6 +45,8 @@ public final class AppState {
 
     private var pollTask: Task<Void, Never>?
     private let fastLaneSeconds: Int = 15
+    private var lastActionsUsageRefresh: Date?
+    private var lastActionsUsageOwnerKey: String?
 
     public var isPolling: Bool { pollTask != nil }
 
@@ -85,6 +88,9 @@ public final class AppState {
         self.runs = MockData.runs
         self.repositories = MockData.repositories
         self.rateLimit = MockData.rateLimit
+        self.actionsUsage = MockData.actionsUsage
+        self.lastActionsUsageRefresh = Date()
+        self.lastActionsUsageOwnerKey = "user:\(MockData.user.login)"
         self.lastRefresh = Date()
         self.isAuthed = true
         self.mockMode = true
@@ -207,6 +213,9 @@ public final class AppState {
         runs = []
         repositories = []
         rateLimit = nil
+        actionsUsage = nil
+        lastActionsUsageRefresh = nil
+        lastActionsUsageOwnerKey = nil
     }
 
     /// Fetch user, recent repos, and recent runs.
@@ -232,6 +241,12 @@ public final class AppState {
             let events = await monitor.ingest(sorted)
             self.runs = sorted
             self.rateLimit = await client.rateLimit
+            let owner = actionsUsageOwner(for: me)
+            if shouldRefreshActionsUsage(for: owner) {
+                self.actionsUsage = try await client.fetchActionsUsage(for: owner.name, isOrg: owner.isOrg)
+                self.lastActionsUsageRefresh = Date()
+                self.lastActionsUsageOwnerKey = actionsUsageOwnerKey(owner)
+            }
             self.lastRefresh = Date()
             stateLog.info("refresh OK — \(allRuns.count) runs, \(events.count) state changes")
             if !events.isEmpty { onStateChanges?(events) }
@@ -239,6 +254,23 @@ public final class AppState {
             lastFetchError = "\(error)"
             stateLog.info("refresh failed — \(error)")
         }
+    }
+
+    private func shouldRefreshActionsUsage(for owner: (name: String, isOrg: Bool)) -> Bool {
+        if lastActionsUsageOwnerKey != actionsUsageOwnerKey(owner) { return true }
+        guard let lastActionsUsageRefresh else { return true }
+        return Date().timeIntervalSince(lastActionsUsageRefresh) >= 60 * 60
+    }
+
+    private func actionsUsageOwner(for user: GitHubUser) -> (name: String, isOrg: Bool) {
+        if orgScope != "All organizations" && orgScope != "Personal" {
+            return (orgScope, true)
+        }
+        return (user.login, false)
+    }
+
+    private func actionsUsageOwnerKey(_ owner: (name: String, isOrg: Bool)) -> String {
+        "\(owner.isOrg ? "org" : "user"):\(owner.name)"
     }
 
     private func copyToPasteboard(_ string: String) {

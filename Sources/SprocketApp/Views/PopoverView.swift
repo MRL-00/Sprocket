@@ -411,14 +411,18 @@ private struct FooterRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            RateBar(fraction: state.rateLimit?.fraction ?? 0)
-            Text(rateText)
-                .font(.system(size: 10.5, design: .monospaced))
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-            Text("· resets in \(resetText)")
-                .font(.system(size: 10.5))
-                .foregroundStyle(.tertiary)
+            if let usage = state.actionsUsage {
+                UsageBar(fraction: usage.fraction, isOverBudget: usage.isOverBudget)
+                Text(actionsUsageText(usage))
+                    .font(.system(size: 10.5, design: .monospaced))
+                    .monospacedDigit()
+                    .foregroundStyle(usage.isOverBudget ? Color.sprocketFailure : Color.secondary)
+            } else {
+                UsageBar(fraction: 0, isOverBudget: false)
+                Text("CI minutes unavailable")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.tertiary)
+            }
             Spacer(minLength: 0)
             Link(destination: URL(string: "https://github.com")!) {
                 HStack(spacing: 3) {
@@ -434,26 +438,21 @@ private struct FooterRow: View {
         .background(Color.primary.opacity(0.02))
     }
 
-    private var rateText: String {
-        let l = state.rateLimit?.limit ?? 5_000
-        let r = state.rateLimit?.remaining ?? 0
-        return "\(Formatting.compactNumber(r)) / \(Formatting.compactNumber(l))"
-    }
-
-    private var resetText: String {
-        guard let r = state.rateLimit?.resetAt else { return "—" }
-        let m = max(0, Int(r.timeIntervalSinceNow) / 60)
-        return "\(m)m"
+    private func actionsUsageText(_ usage: ActionsUsage) -> String {
+        "\(Formatting.compactNumber(usage.totalMinutesUsed)) / \(Formatting.compactNumber(usage.includedMinutes)) CI minutes this month"
     }
 }
 
-private struct RateBar: View {
+private struct UsageBar: View {
     let fraction: Double
+    let isOverBudget: Bool
 
     var body: some View {
         ZStack(alignment: .leading) {
             Capsule().fill(Color.primary.opacity(0.10)).frame(width: 56, height: 4)
-            Capsule().fill(Color.sprocketSuccess).frame(width: max(2, 56 * fraction), height: 4)
+            Capsule()
+                .fill(isOverBudget ? Color.sprocketFailure : Color.sprocketAccent)
+                .frame(width: max(2, 56 * min(max(fraction, 0), 1)), height: 4)
         }
         .frame(width: 56, height: 4)
     }

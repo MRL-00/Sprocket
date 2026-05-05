@@ -198,6 +198,23 @@ public actor GitHubClient {
         }
     }
 
+    public func fetchActionsUsage(for owner: String, isOrg: Bool) async throws -> ActionsUsage? {
+        let encodedOwner = owner.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? owner
+        let path = isOrg
+            ? "/orgs/\(encodedOwner)/settings/billing/actions"
+            : "/users/\(encodedOwner)/settings/billing/actions"
+        let req = makeRequest(path: path)
+        let (data, resp) = try await session.data(for: req)
+        guard let http = resp as? HTTPURLResponse else { throw AuthError.invalidResponse }
+        if http.statusCode == 403 || http.statusCode == 404 {
+            absorbRateLimit(resp)
+            return nil
+        }
+        try check(resp, data: data)
+        absorbRateLimit(resp)
+        return try JSONDecoder().decode(ActionsUsage.self, from: data)
+    }
+
     private func makeRequest(path: String) -> URLRequest {
         var req = URLRequest(url: URL(string: config.baseURL.absoluteString + path)!)
         // GitHub returns `Cache-Control: private, max-age=60` on Actions endpoints,

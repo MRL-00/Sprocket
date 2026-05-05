@@ -7,6 +7,15 @@ public enum MockData {
         RateLimit(limit: 5_000, remaining: 4_832, resetAt: Date().addingTimeInterval(47 * 60))
     }
 
+    public static var actionsUsage: ActionsUsage {
+        ActionsUsage(
+            totalMinutesUsed: 305,
+            includedMinutes: 3_000,
+            paidMinutesUsed: 0,
+            breakdown: ["UBUNTU": 205, "MACOS": 10, "WINDOWS": 90]
+        )
+    }
+
     public static var runs: [WorkflowRun] {
         let now = Date()
         func ago(_ s: TimeInterval) -> Date { now.addingTimeInterval(-s) }
