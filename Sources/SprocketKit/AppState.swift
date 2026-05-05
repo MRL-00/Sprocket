@@ -45,6 +45,8 @@ public final class AppState {
     private var pollTask: Task<Void, Never>?
     private let fastLaneSeconds: Int = 15
 
+    public var isPolling: Bool { pollTask != nil }
+
     public init() {}
 
     public var menuBarState: MenuBarState {

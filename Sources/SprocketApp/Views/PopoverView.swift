@@ -82,6 +82,8 @@ private struct SignedOutPlaceholder: View {
 private struct HeaderRow: View {
     @Environment(AppState.self) private var state
     @Environment(\.openURL) private var openURL
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         HStack(spacing: 10) {
@@ -101,9 +103,10 @@ private struct HeaderRow: View {
                 Task { await state.refresh() }
             }
             IconButton(systemName: "gearshape", help: "Settings") {
-                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                NSApp.activate(ignoringOtherApps: true)
+                openSettings()
             }
-            IconButton(systemName: "ellipsis", help: "More") { /* TODO */ }
+            MoreMenu()
         }
         .padding(.horizontal, 12)
         .padding(.top, 10)
@@ -114,6 +117,85 @@ private struct HeaderRow: View {
         let n = state.repositories.count
         let refresh = state.lastRefresh.map { Formatting.relative($0) } ?? "never refreshed"
         return "\(n) repos · last refreshed \(refresh)"
+    }
+}
+
+private struct MoreMenu: View {
+    @Environment(AppState.self) private var state
+    @Environment(\.openURL) private var openURL
+    @Environment(\.openWindow) private var openWindow
+    @State private var hover = false
+
+    var body: some View {
+        Menu {
+            if state.isAuthed {
+                Button("Refresh now", systemImage: "arrow.clockwise") {
+                    Task { await state.refresh() }
+                }
+                .keyboardShortcut("r")
+
+                if state.isPolling {
+                    Button("Pause polling", systemImage: "pause.circle") {
+                        state.stopPolling()
+                    }
+                } else {
+                    Button("Resume polling", systemImage: "play.circle") {
+                        state.startPolling()
+                    }
+                }
+
+                Divider()
+
+                Button("Open GitHub Actions", systemImage: "arrow.up.right.square") {
+                    openURL(URL(string: "https://github.com")!)
+                }
+            } else {
+                Button("Sign in to GitHub", systemImage: "person.crop.circle.badge.plus") {
+                    NSApp.activate(ignoringOtherApps: true)
+                    openWindow(id: "welcome")
+                }
+                Divider()
+            }
+
+            Button("Welcome / Reconfigure…", systemImage: "sparkles") {
+                NSApp.activate(ignoringOtherApps: true)
+                openWindow(id: "welcome")
+            }
+
+            Divider()
+
+            Button("About Sprocket", systemImage: "info.circle") {
+                NSApp.activate(ignoringOtherApps: true)
+                NSApp.orderFrontStandardAboutPanel(nil)
+            }
+
+            if state.isAuthed {
+                Divider()
+                Button("Sign out", systemImage: "rectangle.portrait.and.arrow.right", role: .destructive) {
+                    Task { await state.signOut() }
+                }
+            }
+
+            Divider()
+
+            Button("Quit Sprocket", systemImage: "power") {
+                NSApp.terminate(nil)
+            }
+            .keyboardShortcut("q")
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 22, height: 22)
+                .background(hover ? Color.primary.opacity(0.06) : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 5))
+                .contentShape(RoundedRectangle(cornerRadius: 5))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .onHover { hover = $0 }
+        .help("More")
     }
 }
 

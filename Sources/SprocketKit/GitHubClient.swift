@@ -200,6 +200,12 @@ public actor GitHubClient {
 
     private func makeRequest(path: String) -> URLRequest {
         var req = URLRequest(url: URL(string: config.baseURL.absoluteString + path)!)
+        // GitHub returns `Cache-Control: private, max-age=60` on Actions endpoints,
+        // so the default URLSession cache silently serves stale data and polling
+        // never sees new runs. Force a network round-trip every time. (We can layer
+        // ETag-based conditional requests on top later — that needs `etags` to
+        // actually be populated from response headers, which it isn't yet.)
+        req.cachePolicy = .reloadIgnoringLocalCacheData
         req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         req.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
         req.setValue(config.userAgent, forHTTPHeaderField: "User-Agent")
@@ -218,10 +224,15 @@ public actor GitHubClient {
 
     private func absorbRateLimit(_ resp: URLResponse) {
         guard let http = resp as? HTTPURLResponse else { return }
-        let h = http.allHeaderFields
-        let limit = (h["X-RateLimit-Limit"] as? String).flatMap(Int.init) ?? 5_000
-        let remaining = (h["X-RateLimit-Remaining"] as? String).flatMap(Int.init) ?? 0
-        let reset = (h["X-RateLimit-Reset"] as? String).flatMap(TimeInterval.init).map { Date(timeIntervalSince1970: $0) } ?? Date()
+        // GitHub serves headers lowercase over HTTP/2 — `allHeaderFields[...]`
+        // is case-sensitive in Swift and silently misses, so we use
+        // `value(forHTTPHeaderField:)` which is case-insensitive.
+        guard let remainingStr = http.value(forHTTPHeaderField: "X-RateLimit-Remaining"),
+              let remaining = Int(remainingStr) else { return }
+        let limit = http.value(forHTTPHeaderField: "X-RateLimit-Limit").flatMap(Int.init) ?? 5_000
+        let reset = http.value(forHTTPHeaderField: "X-RateLimit-Reset")
+            .flatMap(TimeInterval.init)
+            .map { Date(timeIntervalSince1970: $0) } ?? Date()
         rateLimit = RateLimit(limit: limit, remaining: remaining, resetAt: reset)
     }
 }

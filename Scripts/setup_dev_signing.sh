@@ -41,12 +41,14 @@ openssl req -x509 -newkey rsa:4096 -sha256 -days 3650 \
     -nodes -keyout /tmp/sprocket-dev.key -out /tmp/sprocket-dev.crt \
     -config "$TEMP_CONFIG" 2>/dev/null
 
+P12_PASS="sprocket-dev"
 openssl pkcs12 -export -out /tmp/sprocket-dev.p12 \
     -inkey /tmp/sprocket-dev.key -in /tmp/sprocket-dev.crt \
-    -passout pass: 2>/dev/null
+    -passout "pass:$P12_PASS" 2>/dev/null
 
 security import /tmp/sprocket-dev.p12 \
     -k ~/Library/Keychains/login.keychain-db \
+    -P "$P12_PASS" \
     -T /usr/bin/codesign -T /usr/bin/security
 
 rm -f /tmp/sprocket-dev.{key,crt,p12}

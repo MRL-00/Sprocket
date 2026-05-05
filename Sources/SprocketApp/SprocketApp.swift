@@ -14,6 +14,7 @@ struct SprocketApp: App {
         s.onStateChanges = { events in Notifier.handle(events: events) }
         _state = State(initialValue: s)
         Notifier.requestAuthorizationIfNeeded()
+        MenuBarContextMenu.shared.install(state: s)
     }
 
     var body: some Scene {
@@ -42,8 +43,17 @@ struct SprocketApp: App {
 }
 
 private struct MenuBarLabel: View {
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
     let state: MenuBarState
+
     var body: some View {
         Image(nsImage: MenuBarIconRenderer.image(for: state))
+            .onReceive(NotificationCenter.default.publisher(for: .sprocketShowWelcome)) { _ in
+                openWindow(id: "welcome")
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .sprocketShowSettings)) { _ in
+                openSettings()
+            }
     }
 }

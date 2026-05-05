@@ -11,14 +11,20 @@ enum MenuBarIconRenderer {
     static let pointSize = NSSize(width: 22, height: 22)
 
     static func image(for state: MenuBarState) -> NSImage {
+        // Only `authMissing` ships as a template (so AppKit tints it the muted
+        // menu-bar gray). Every other state needs a real colored badge — green,
+        // red, amber — and template mode would flatten that to a single tint.
+        // For non-template states we draw the gear in `labelColor`, which the
+        // drawing handler resolves against the menu bar's appearance at draw
+        // time, so it stays visible on light or dark menu bars.
         switch state {
-        case .running:
-            let img = render(state: state, template: false)
-            img.isTemplate = false
-            return img
-        default:
+        case .authMissing:
             let img = render(state: state, template: true)
             img.isTemplate = true
+            return img
+        default:
+            let img = render(state: state, template: false)
+            img.isTemplate = false
             return img
         }
     }
@@ -53,9 +59,12 @@ enum MenuBarIconRenderer {
 
         let path = SprocketGeometry.chainringPath(centerX: cx, centerY: cy, radius: radius)
 
+        // Template = single mask, AppKit tints. Non-template = we resolve a color
+        // that adapts to the menu bar appearance ourselves; `labelColor` does that
+        // because the drawing handler runs inside the menu bar's draw context.
         let fg: NSColor = template
             ? NSColor.black
-            : (state == .authMissing ? NSColor(white: 0.6, alpha: 1) : NSColor.black)
+            : (state == .authMissing ? NSColor(white: 0.6, alpha: 1) : NSColor.labelColor)
         fg.setFill()
         path.fill()
     }
