@@ -37,10 +37,13 @@ struct PopoverView: View {
         .task {
             guard !didBootstrap, !state.mockMode else { return }
             didBootstrap = true
-            await state.bootstrap()
-            if !state.isAuthed {
-                NSApp.activate(ignoringOtherApps: true)
-                openWindow(id: "welcome")
+            // Detach so closing the popover doesn't cancel the in-flight refresh.
+            Task { @MainActor in
+                await state.bootstrap()
+                if !state.isAuthed {
+                    NSApp.activate(ignoringOtherApps: true)
+                    openWindow(id: "welcome")
+                }
             }
         }
     }
@@ -226,11 +229,21 @@ private struct RunListView: View {
     @Environment(AppState.self) private var state
 
     var body: some View {
-        ScrollView(.vertical) {
-            LazyVStack(spacing: 0) {
-                ForEach(filtered) { run in
-                    RunRow(run: run)
-                    Divider().opacity(0.4)
+        Group {
+            if filtered.isEmpty && state.isRefreshing {
+                LoadingPlaceholder()
+            } else if filtered.isEmpty, let err = state.lastFetchError {
+                ErrorPlaceholder(message: err) { Task { await state.refresh() } }
+            } else if filtered.isEmpty {
+                EmptyPlaceholder()
+            } else {
+                ScrollView(.vertical) {
+                    LazyVStack(spacing: 0) {
+                        ForEach(filtered) { run in
+                            RunRow(run: run)
+                            Divider().opacity(0.4)
+                        }
+                    }
                 }
             }
         }
@@ -245,6 +258,63 @@ private struct RunListView: View {
             scoped = state.visibleRuns.filter { $0.repo.hasPrefix(state.orgScope + "/") }
         }
         return scoped
+    }
+}
+
+private struct LoadingPlaceholder: View {
+    var body: some View {
+        VStack(spacing: 10) {
+            Spacer()
+            ProgressView().controlSize(.regular)
+            Text("Loading workflow runs…")
+                .font(.system(size: 11.5))
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+private struct EmptyPlaceholder: View {
+    var body: some View {
+        VStack(spacing: 8) {
+            Spacer()
+            Image(systemName: "checkmark.circle")
+                .font(.system(size: 28, weight: .light))
+                .foregroundStyle(.tertiary)
+            Text("No workflow runs match")
+                .font(.system(size: 12, weight: .medium))
+            Text("Try a different filter or refresh.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+private struct ErrorPlaceholder: View {
+    let message: String
+    let retry: () -> Void
+    var body: some View {
+        VStack(spacing: 10) {
+            Spacer()
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 24, weight: .light))
+                .foregroundStyle(.tertiary)
+            Text("Couldn't fetch runs")
+                .font(.system(size: 12, weight: .medium))
+            Text(message)
+                .font(.system(size: 10.5))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
+                .lineLimit(3)
+            Button("Retry", action: retry)
+                .buttonStyle(.bordered)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

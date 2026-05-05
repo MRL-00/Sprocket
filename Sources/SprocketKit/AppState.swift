@@ -1,10 +1,13 @@
 import Foundation
+import os.log
 #if canImport(AppKit)
 import AppKit
 #endif
 #if canImport(Observation)
 import Observation
 #endif
+
+private let stateLog = Logger(subsystem: "nz.matt.sprocket", category: "state")
 
 @MainActor @Observable
 public final class AppState {
@@ -29,6 +32,7 @@ public final class AppState {
     public var isSigningIn: Bool = false
     public var signInError: String?
     public var lastFetchError: String?
+    public var isRefreshing: Bool = false
 
     public let client = GitHubClient()
     public let auth = AuthStore()
@@ -80,11 +84,15 @@ public final class AppState {
     /// the client, and refresh data if signed in.
     public func bootstrap() async {
         let storedID = await auth.clientID()
+        stateLog.info("bootstrap — clientID=\(storedID ?? "nil")")
         await client.setClientID(storedID)
         if let creds = await auth.loadCredentials() {
+            stateLog.info("bootstrap — token loaded (\(creds.token.count) chars)")
             await client.setToken(creds.token)
             isAuthed = true
             await refresh()
+        } else {
+            stateLog.info("bootstrap — no token in keychain")
         }
     }
 
@@ -164,15 +172,19 @@ public final class AppState {
 
     /// Fetch user, recent repos, and recent runs.
     public func refresh() async {
-        guard isAuthed else { return }
+        guard isAuthed else { stateLog.info("refresh skipped — not authed"); return }
         lastFetchError = nil
+        isRefreshing = true
+        defer { isRefreshing = false }
+        stateLog.info("refresh started")
         do {
             let me = try await client.currentUser()
             user = me
+            stateLog.info("refresh — user=\(me.login)")
             let repos = try await client.listRepos(perPage: 12)
             repositories = repos
+            stateLog.info("refresh — \(repos.count) repos")
             var allRuns: [WorkflowRun] = []
-            // Cap to first ~8 repos to stay friendly to the rate limit on first load.
             for repo in repos.prefix(8) {
                 let runs = (try? await client.listRuns(repo: repo, perPage: 5)) ?? []
                 allRuns.append(contentsOf: runs)
@@ -180,8 +192,10 @@ public final class AppState {
             self.runs = allRuns.sorted { $0.startedAt > $1.startedAt }
             self.rateLimit = await client.rateLimit
             self.lastRefresh = Date()
+            stateLog.info("refresh OK — \(allRuns.count) runs")
         } catch {
             lastFetchError = "\(error)"
+            stateLog.info("refresh failed — \(error)")
         }
     }
 

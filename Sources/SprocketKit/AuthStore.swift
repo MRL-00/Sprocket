@@ -1,7 +1,10 @@
 import Foundation
+import os.log
 #if canImport(Security)
 import Security
 #endif
+
+private let authLog = Logger(subsystem: "nz.matt.sprocket", category: "auth")
 
 public struct AuthCredentials: Sendable, Hashable, Codable {
     public let token: String
@@ -37,8 +40,18 @@ public actor AuthStore {
 
     public func loadCredentials() -> AuthCredentials? {
         #if canImport(Security)
-        guard let data = readKeychain(account: Self.tokenAccount) else { return nil }
-        return try? JSONDecoder().decode(AuthCredentials.self, from: data)
+        guard let data = readKeychain(account: Self.tokenAccount) else {
+            authLog.info("Keychain load returned nil (no item or read denied)")
+            return nil
+        }
+        do {
+            let creds = try JSONDecoder().decode(AuthCredentials.self, from: data)
+            authLog.info("Keychain load OK (\(data.count) bytes)")
+            return creds
+        } catch {
+            authLog.info("Keychain load decode failed: \(error)")
+            return nil
+        }
         #else
         return nil
         #endif
@@ -48,6 +61,7 @@ public actor AuthStore {
         #if canImport(Security)
         let data = try JSONEncoder().encode(creds)
         try writeKeychain(account: Self.tokenAccount, data: data)
+        authLog.info("Keychain save OK (\(data.count) bytes)")
         #endif
     }
 
@@ -69,7 +83,7 @@ public actor AuthStore {
         let status = SecItemCopyMatching(q as CFDictionary, &item)
         if status == errSecItemNotFound { return nil }
         if status != errSecSuccess {
-            NSLog("Sprocket: Keychain read failed for \(account), OSStatus=\(status)")
+            authLog.info("Keychain read failed for \(account), OSStatus=\(status)")
             return nil
         }
         return item as? Data
