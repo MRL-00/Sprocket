@@ -35,15 +35,21 @@ struct PopoverView: View {
         .frame(width: 420, height: 560)
         .font(.system(size: 12, design: .default))
         .task {
-            guard !didBootstrap, !state.mockMode else { return }
-            didBootstrap = true
+            guard !state.mockMode else { return }
             // Detach so closing the popover doesn't cancel the in-flight refresh.
-            Task { @MainActor in
-                await state.bootstrap()
-                if !state.isAuthed {
-                    NSApp.activate(ignoringOtherApps: true)
-                    openWindow(id: "welcome")
+            if !didBootstrap {
+                didBootstrap = true
+                Task { @MainActor in
+                    await state.bootstrap()
+                    if !state.isAuthed {
+                        NSApp.activate(ignoringOtherApps: true)
+                        openWindow(id: "welcome")
+                    }
                 }
+            } else if state.isAuthed {
+                // Each subsequent open kicks an immediate refresh so the user
+                // sees the freshest state without waiting on the poll cadence.
+                Task { @MainActor in await state.refresh() }
             }
         }
     }

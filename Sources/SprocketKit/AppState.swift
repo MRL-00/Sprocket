@@ -36,6 +36,11 @@ public final class AppState {
 
     public let client = GitHubClient()
     public let auth = AuthStore()
+    public let monitor = RunMonitor()
+
+    /// Hook for run state-change events emitted on every refresh. Consumers
+    /// (e.g. the app's `Notifier`) can subscribe at startup.
+    public var onStateChanges: (@MainActor ([RunStateChange]) -> Void)?
 
     private var pollTask: Task<Void, Never>?
     private let fastLaneSeconds: Int = 15
@@ -93,26 +98,26 @@ public final class AppState {
             stateLog.info("bootstrap — token loaded (\(creds.token.count) chars)")
             await client.setToken(creds.token)
             isAuthed = true
-            await refresh()
             startPolling()
         } else {
             stateLog.info("bootstrap — no token in keychain")
         }
     }
 
-    /// Start background polling. Loops on the main actor, refreshing on the
-    /// fast lane when any run is live and on `pollingCadenceSeconds` otherwise.
+    /// Start background polling. Refreshes immediately, then loops with the
+    /// fast-lane cadence when any run is live and `pollingCadenceSeconds`
+    /// otherwise — so the interval is always based on the freshest snapshot.
     public func startPolling() {
         guard pollTask == nil else { return }
         stateLog.info("polling started — base=\(self.pollingCadenceSeconds)s fast=\(self.fastLaneSeconds)s")
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
-                let interval = self.nextPollInterval()
-                try? await Task.sleep(for: .seconds(interval))
-                if Task.isCancelled { return }
                 guard self.isAuthed else { return }
                 await self.refresh()
+                if Task.isCancelled { return }
+                let interval = self.nextPollInterval()
+                try? await Task.sleep(for: .seconds(interval))
             }
         }
     }
@@ -170,7 +175,6 @@ public final class AppState {
                 pendingUserCode = nil
                 pendingVerificationURL = nil
                 isAuthed = true
-                await refresh()
                 startPolling()
                 return
             } catch AuthError.authorizationPending {
@@ -222,10 +226,13 @@ public final class AppState {
                 let runs = (try? await client.listRuns(repo: repo, perPage: 5)) ?? []
                 allRuns.append(contentsOf: runs)
             }
-            self.runs = allRuns.sorted { $0.startedAt > $1.startedAt }
+            let sorted = allRuns.sorted { $0.startedAt > $1.startedAt }
+            let events = await monitor.ingest(sorted)
+            self.runs = sorted
             self.rateLimit = await client.rateLimit
             self.lastRefresh = Date()
-            stateLog.info("refresh OK — \(allRuns.count) runs")
+            stateLog.info("refresh OK — \(allRuns.count) runs, \(events.count) state changes")
+            if !events.isEmpty { onStateChanges?(events) }
         } catch {
             lastFetchError = "\(error)"
             stateLog.info("refresh failed — \(error)")

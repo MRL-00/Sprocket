@@ -11,6 +11,7 @@ struct SprocketApp: App {
         let mock = CommandLine.arguments.contains("--mock")
         let s = AppState()
         if mock { s.loadMock() }
+        s.onStateChanges = { events in Notifier.handle(events: events) }
         _state = State(initialValue: s)
         Notifier.requestAuthorizationIfNeeded()
     }
