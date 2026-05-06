@@ -32,7 +32,7 @@ struct PopoverView: View {
                 .strokeBorder(.primary.opacity(0.10), lineWidth: 0.5)
         )
         .clipShape(RoundedRectangle(cornerRadius: 14))
-        .frame(width: 420, height: 560)
+        .frame(width: 440, height: 560)
         .font(.system(size: 12, design: .default))
         .task {
             guard !state.mockMode else { return }
@@ -81,6 +81,7 @@ private struct SignedOutPlaceholder: View {
 
 private struct HeaderRow: View {
     @Environment(AppState.self) private var state
+    @Environment(UpdateManager.self) private var updater
     @Environment(\.openURL) private var openURL
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
@@ -100,6 +101,11 @@ private struct HeaderRow: View {
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
+            Text("v\(updater.currentVersion)")
+                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+                .help("Sprocket \(updater.currentVersion)")
             IconButton(systemName: "arrow.clockwise", help: "Refresh (⌘R)") {
                 Task { await state.refresh() }
             }
@@ -243,13 +249,13 @@ private struct FilterRow: View {
             Picker("", selection: $state.filter) {
                 ForEach(FilterTab.allCases, id: \.self) { t in
                     Text(label(t))
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: 10.5, weight: .medium))
                         .tag(t)
                 }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .fixedSize()
+            .frame(maxWidth: .infinity)
 
             ZStack(alignment: .leading) {
                 Image(systemName: "magnifyingglass")
@@ -268,6 +274,7 @@ private struct FilterRow: View {
                             .strokeBorder(.primary.opacity(0.08), lineWidth: 0.5)
                     )
             }
+            .frame(width: 116)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
