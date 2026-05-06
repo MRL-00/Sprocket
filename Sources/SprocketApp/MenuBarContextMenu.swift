@@ -15,10 +15,12 @@ final class MenuBarContextMenu: NSObject {
     static let shared = MenuBarContextMenu()
 
     private weak var state: AppState?
+    private weak var updater: UpdateManager?
     private var monitor: Any?
 
-    func install(state: AppState) {
+    func install(state: AppState, updater: UpdateManager) {
         self.state = state
+        self.updater = updater
         guard monitor == nil else { return }
         monitor = NSEvent.addLocalMonitorForEvents(matching: .rightMouseDown) { event in
             // Local monitor handlers run on the main thread per AppKit contract,
@@ -61,6 +63,7 @@ final class MenuBarContextMenu: NSObject {
 
         menu.addItem(item("Welcome / Reconfigure…", action: #selector(showWelcome)))
         menu.addItem(.separator())
+        menu.addItem(item("Check for Updates…", action: #selector(checkForUpdatesAction)))
         menu.addItem(item("Settings…", action: #selector(showSettings), key: ","))
         menu.addItem(item("About Sprocket", action: #selector(showAbout)))
 
@@ -104,6 +107,11 @@ final class MenuBarContextMenu: NSObject {
     @objc private func showSettings() {
         NSApp.activate(ignoringOtherApps: true)
         NotificationCenter.default.post(name: .sprocketShowSettings, object: nil)
+    }
+
+    @objc private func checkForUpdatesAction() {
+        let updater = updater
+        Task { @MainActor in await updater?.checkForUpdatesWithUserFeedback() }
     }
 
     @objc private func showAbout() {

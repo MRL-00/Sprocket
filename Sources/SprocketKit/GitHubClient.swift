@@ -1,13 +1,16 @@
 import Foundation
 
 public struct GitHubClientConfig: Sendable {
+    public static let defaultBaseURL = URL(string: "https://api.github.com")!
+    public static let defaultUserAgent = "Sprocket/0.1"
+
     public var baseURL: URL
     public var userAgent: String
     public var clientID: String?
 
     public init(
-        baseURL: URL = URL(string: "https://api.github.com")!,
-        userAgent: String = "Sprocket/0.1",
+        baseURL: URL = Self.defaultBaseURL,
+        userAgent: String = Self.defaultUserAgent,
         clientID: String? = nil
     ) {
         self.baseURL = baseURL
@@ -40,6 +43,14 @@ public actor GitHubClient {
 
     public func setClientID(_ id: String?) {
         config.clientID = id
+    }
+
+    public func setBaseURL(_ url: URL) {
+        config.baseURL = url
+    }
+
+    public func setUserAgent(_ userAgent: String) {
+        config.userAgent = userAgent
     }
 
     // MARK: - Device flow
@@ -80,7 +91,7 @@ public actor GitHubClient {
 
     public func requestDeviceCode(scope: String = "repo workflow read:org user") async throws -> DeviceCode {
         guard let clientID = config.clientID else { throw AuthError.other("Missing Client ID") }
-        var req = URLRequest(url: URL(string: "https://github.com/login/device/code")!)
+        var req = URLRequest(url: oauthURL(path: "/login/device/code"))
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
@@ -93,7 +104,7 @@ public actor GitHubClient {
 
     public func pollAccessToken(deviceCode: String) async throws -> AccessTokenResponse {
         guard let clientID = config.clientID else { throw AuthError.other("Missing Client ID") }
-        var req = URLRequest(url: URL(string: "https://github.com/login/oauth/access_token")!)
+        var req = URLRequest(url: oauthURL(path: "/login/oauth/access_token"))
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
@@ -291,6 +302,17 @@ public actor GitHubClient {
         if let token { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         if let etag = etags[req.url!] { req.setValue(etag, forHTTPHeaderField: "If-None-Match") }
         return req
+    }
+
+    private func oauthURL(path: String) -> URL {
+        let api = config.baseURL
+        if api.host == "api.github.com" {
+            return URL(string: "https://github.com\(path)")!
+        }
+        var components = URLComponents(url: api, resolvingAgainstBaseURL: false)!
+        components.path = path
+        components.query = nil
+        return components.url!
     }
 
     private func check(_ resp: URLResponse, data: Data) throws {

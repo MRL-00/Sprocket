@@ -193,6 +193,7 @@ private struct BulletCard: View {
 }
 
 private struct WelcomeStep2: View {
+    @Environment(AppState.self) private var state
     @Environment(\.openURL) private var openURL
 
     var body: some View {
@@ -222,7 +223,7 @@ private struct WelcomeStep2: View {
 
             HStack(spacing: 8) {
                 Button {
-                    openURL(Self.registrationURL)
+                    openURL(state.settings.oauthRegistrationURL)
                 } label: {
                     Label("Open GitHub to create app", systemImage: "arrow.up.right.square")
                 }
@@ -231,7 +232,7 @@ private struct WelcomeStep2: View {
 
                 Button {
                     NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(Self.registrationURL.absoluteString, forType: .string)
+                    NSPasteboard.general.setString(state.settings.oauthRegistrationURL.absoluteString, forType: .string)
                 } label: {
                     Label("Copy registration URL", systemImage: "doc.on.doc")
                 }
@@ -240,18 +241,6 @@ private struct WelcomeStep2: View {
             .padding(.top, 6)
         }
     }
-
-    private static let registrationURL: URL = {
-        var c = URLComponents(string: "https://github.com/settings/applications/new")!
-        c.queryItems = [
-            URLQueryItem(name: "oauth_application[name]", value: "Sprocket"),
-            URLQueryItem(name: "oauth_application[url]", value: "https://github.com/MRL-00/Sprocket"),
-            URLQueryItem(name: "oauth_application[callback_url]", value: "https://localhost/callback"),
-            URLQueryItem(name: "oauth_application[description]",
-                         value: "Menu-bar GitHub Actions monitor. Uses Device Flow — callback URL is unused."),
-        ]
-        return c.url!
-    }()
 }
 
 private struct StepLine: View {

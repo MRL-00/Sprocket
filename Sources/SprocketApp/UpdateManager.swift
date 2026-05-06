@@ -92,6 +92,32 @@ final class UpdateManager {
         NSWorkspace.shared.open(update.releaseURL)
     }
 
+    func checkForUpdatesWithUserFeedback() async {
+        await checkForUpdates()
+        switch status {
+        case .upToDate:
+            showAlert(
+                title: "Sprocket is up to date",
+                message: "You are running version \(currentVersion)."
+            )
+        case .updateAvailable(let update):
+            let choice = showAlert(
+                title: "Sprocket \(update.version) is available",
+                message: "You are running version \(currentVersion).",
+                buttons: ["Install Update", "View Release", "Later"]
+            )
+            if choice == .alertFirstButtonReturn {
+                await install(update)
+            } else if choice == .alertSecondButtonReturn {
+                NSWorkspace.shared.open(update.releaseURL)
+            }
+        case .failed(let message):
+            showAlert(title: "Could not check for updates", message: message)
+        default:
+            break
+        }
+    }
+
     private func latestUpdate() async throws -> AppUpdate? {
         var request = URLRequest(url: releasesURL)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
@@ -226,6 +252,18 @@ final class UpdateManager {
             return updateError.localizedDescription
         }
         return error.localizedDescription
+    }
+
+    @discardableResult
+    private func showAlert(title: String, message: String, buttons: [String] = ["OK"]) -> NSApplication.ModalResponse {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        for button in buttons {
+            alert.addButton(withTitle: button)
+        }
+        return alert.runModal()
     }
 }
 
