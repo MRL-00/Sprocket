@@ -27,7 +27,7 @@ struct SprocketApp: App {
             PopoverView()
                 .environment(state)
                 .environment(updater)
-                .frame(width: 420, height: 560)
+                .frame(width: 440, height: 560)
         } label: {
             MenuBarLabel(state: state.menuBarState)
                 .environment(updater)
