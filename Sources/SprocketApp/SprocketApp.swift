@@ -11,11 +11,15 @@ struct SprocketApp: App {
     init() {
         let mock = CommandLine.arguments.contains("--mock")
         let s = AppState()
+        let u = UpdateManager()
         if mock { s.loadMock() }
-        s.onStateChanges = { events in Notifier.handle(events: events) }
+        s.onStateChanges = { events in
+            Notifier.handle(events: events, settings: s.settings, currentUserLogin: s.user?.login)
+        }
         _state = State(initialValue: s)
+        _updater = State(initialValue: u)
         Notifier.requestAuthorizationIfNeeded()
-        MenuBarContextMenu.shared.install(state: s)
+        MenuBarContextMenu.shared.install(state: s, updater: u)
     }
 
     var body: some Scene {

@@ -123,8 +123,10 @@ private struct HeaderRow: View {
 
 private struct MoreMenu: View {
     @Environment(AppState.self) private var state
+    @Environment(UpdateManager.self) private var updater
     @Environment(\.openURL) private var openURL
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
     @State private var hover = false
 
     var body: some View {
@@ -164,6 +166,16 @@ private struct MoreMenu: View {
             }
 
             Divider()
+
+            Button("Check for Updates…", systemImage: "arrow.down.circle") {
+                Task { await updater.checkForUpdatesWithUserFeedback() }
+            }
+
+            Button("Settings…", systemImage: "gearshape") {
+                NSApp.activate(ignoringOtherApps: true)
+                openSettings()
+            }
+            .keyboardShortcut(",")
 
             Button("About Sprocket", systemImage: "info.circle") {
                 NSApp.activate(ignoringOtherApps: true)
