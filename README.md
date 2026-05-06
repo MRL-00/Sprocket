@@ -56,6 +56,7 @@ Build a runnable `Sprocket.app` bundle:
 ./Scripts/package_app.sh                       # release
 VERSION=0.2.0 ./Scripts/package_app.sh         # release with bundle version
 SPROCKET_SIGNING=adhoc ./Scripts/package_app.sh # ad-hoc codesign
+SPROCKET_SIGNING=developer-id APP_IDENTITY='Developer ID Application: Your Name (TEAMID)' ./Scripts/package_app.sh
 open build/Sprocket.app
 ```
 
@@ -68,10 +69,22 @@ git tag v0.2.0
 git push origin v0.2.0
 ```
 
-The release workflow builds `Sprocket.app`, archives it as
-`Sprocket-0.2.0-macos.zip`, uploads the zip and checksum to GitHub Releases,
-generates release notes, and commits the updated Homebrew cask checksum back to
-`main`.
+The release workflow builds `Sprocket.app`, signs it with Developer ID,
+notarizes and staples it, archives it as `Sprocket-0.2.0-macos.zip`, uploads
+the zip and checksum to GitHub Releases, generates release notes, and commits
+the updated Homebrew cask checksum back to `main`.
+
+Release signing and notarization require these GitHub Actions secrets:
+
+- `DEVELOPER_ID_CERTIFICATE_BASE64` — base64-encoded `.p12` export of the
+  Developer ID Application certificate and private key.
+- `DEVELOPER_ID_CERTIFICATE_PASSWORD` — password for the `.p12` export.
+- `DEVELOPER_ID_APPLICATION_IDENTITY` — codesigning identity, for example
+  `Developer ID Application: Your Name (TEAMID)`.
+- `APP_STORE_CONNECT_API_KEY_BASE64` — base64-encoded App Store Connect API
+  key `.p8` file.
+- `APP_STORE_CONNECT_KEY_ID` — App Store Connect API key ID.
+- `APP_STORE_CONNECT_ISSUER_ID` — App Store Connect issuer ID.
 
 To update the cask by hand from a local artifact:
 
@@ -81,10 +94,6 @@ git add Casks/sprocket.rb
 git commit -m "Update Homebrew cask to 0.2.0"
 git push
 ```
-
-For public distribution, replace ad-hoc signing in the release workflow with a
-Developer ID certificate and notarization so users do not see Gatekeeper
-warnings.
 
 ## Mock mode
 

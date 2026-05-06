@@ -20,12 +20,75 @@ jobs:
       - name: Test
         run: swift test --parallel
 
+      - name: Import Developer ID certificate
+        env:
+          DEVELOPER_ID_CERTIFICATE_BASE64: ${{ secrets.DEVELOPER_ID_CERTIFICATE_BASE64 }}
+          DEVELOPER_ID_CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          : "${DEVELOPER_ID_CERTIFICATE_BASE64:?DEVELOPER_ID_CERTIFICATE_BASE64 secret is required}"
+          : "${DEVELOPER_ID_CERTIFICATE_PASSWORD:?DEVELOPER_ID_CERTIFICATE_PASSWORD secret is required}"
+
+          certificate_path="$RUNNER_TEMP/developer-id.p12"
+          keychain_path="$RUNNER_TEMP/sprocket-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+
+          echo "$DEVELOPER_ID_CERTIFICATE_BASE64" | base64 -D > "$certificate_path"
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security import "$certificate_path" \
+            -P "$DEVELOPER_ID_CERTIFICATE_PASSWORD" \
+            -A \
+            -t cert \
+            -f pkcs12 \
+            -k "$keychain_path"
+          security list-keychains -d user -s "$keychain_path"
+          security default-keychain -s "$keychain_path"
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -s \
+            -k "$keychain_password" \
+            "$keychain_path"
+          security find-identity -v -p codesigning "$keychain_path"
+
       - name: Build app bundle
         run: VERSION="${GITHUB_REF_NAME#v}" ./Scripts/package_app.sh
         env:
           CONFIG: release
           BUILD_NUMBER: ${{ github.run_number }}
-          SPROCKET_SIGNING: adhoc
+          SPROCKET_SIGNING: developer-id
+          APP_IDENTITY: ${{ secrets.DEVELOPER_ID_APPLICATION_IDENTITY }}
+
+      - name: Verify signature
+        run: |
+          set -euo pipefail
+          codesign --verify --deep --strict --verbose=2 build/Sprocket.app
+
+      - name: Notarize app
+        env:
+          APP_STORE_CONNECT_API_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_KEY_BASE64 }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          : "${APP_STORE_CONNECT_API_KEY_BASE64:?APP_STORE_CONNECT_API_KEY_BASE64 secret is required}"
+          : "${APP_STORE_CONNECT_KEY_ID:?APP_STORE_CONNECT_KEY_ID secret is required}"
+          : "${APP_STORE_CONNECT_ISSUER_ID:?APP_STORE_CONNECT_ISSUER_ID secret is required}"
+
+          api_key_path="$RUNNER_TEMP/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"
+          notarization_zip="build/Sprocket-notarization.zip"
+
+          echo "$APP_STORE_CONNECT_API_KEY_BASE64" | base64 -D > "$api_key_path"
+          ditto -c -k --keepParent build/Sprocket.app "$notarization_zip"
+          xcrun notarytool submit "$notarization_zip" \
+            --key "$api_key_path" \
+            --key-id "$APP_STORE_CONNECT_KEY_ID" \
+            --issuer "$APP_STORE_CONNECT_ISSUER_ID" \
+            --wait
+          xcrun stapler staple build/Sprocket.app
+          xcrun stapler validate build/Sprocket.app
+          spctl --assess --type execute --verbose=4 build/Sprocket.app
 
       - name: Archive app
         run: |

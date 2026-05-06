@@ -6,6 +6,7 @@
 #   VERSION=0.2.0 ./Scripts/package_app.sh
 #   APP_IDENTITY='Sprocket Development' ./Scripts/package_app.sh  # stable self-signed identity
 #   SPROCKET_SIGNING=adhoc ./Scripts/package_app.sh  # force ad-hoc signing
+#   SPROCKET_SIGNING=developer-id APP_IDENTITY='Developer ID Application: ...' ./Scripts/package_app.sh
 #
 # A stable signing identity keeps Keychain ACLs valid across rebuilds, so the
 # user isn't prompted to allow Keychain access every time. Run
@@ -51,11 +52,29 @@ cat > "$OUT/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-if [[ "${SPROCKET_SIGNING:-}" == "adhoc" ]]; then
-  codesign --force --deep --sign - "$OUT"
-elif [[ -n "${APP_IDENTITY:-}" ]]; then
-  echo "Signing with identity: $APP_IDENTITY"
-  codesign --force --deep --sign "$APP_IDENTITY" --options runtime --timestamp=none "$OUT"
-fi
+case "${SPROCKET_SIGNING:-}" in
+  adhoc)
+    codesign --force --deep --sign - "$OUT"
+    ;;
+  developer-id)
+    if [[ -z "${APP_IDENTITY:-}" ]]; then
+      echo "APP_IDENTITY is required when SPROCKET_SIGNING=developer-id" >&2
+      exit 1
+    fi
+
+    echo "Signing with Developer ID identity: $APP_IDENTITY"
+    codesign --force --deep --sign "$APP_IDENTITY" --options runtime --timestamp "$OUT"
+    ;;
+  "")
+    if [[ -n "${APP_IDENTITY:-}" ]]; then
+      echo "Signing with identity: $APP_IDENTITY"
+      codesign --force --deep --sign "$APP_IDENTITY" --options runtime --timestamp=none "$OUT"
+    fi
+    ;;
+  *)
+    echo "Unknown SPROCKET_SIGNING value: $SPROCKET_SIGNING" >&2
+    exit 1
+    ;;
+esac
 
 echo "Built $OUT"
