@@ -29,6 +29,7 @@ OUT="$ROOT/build/$APP_NAME.app"
 rm -rf "$OUT"
 mkdir -p "$OUT/Contents/MacOS" "$OUT/Contents/Resources"
 cp "$BIN/$APP_NAME" "$OUT/Contents/MacOS/$APP_NAME"
+swift "$ROOT/Scripts/generate_app_icon.swift" "$OUT/Contents/Resources/AppIcon.icns"
 
 cat > "$OUT/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -41,6 +42,7 @@ cat > "$OUT/Contents/Info.plist" <<PLIST
   <key>CFBundleVersion</key><string>$BUILD_NUMBER</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundleExecutable</key><string>$APP_NAME</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>LSMinimumSystemVersion</key><string>26.0</string>
   <key>LSUIElement</key><true/>
