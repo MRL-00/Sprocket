@@ -5,6 +5,7 @@ import UserNotifications
 @main
 struct SprocketApp: App {
     @State private var state = AppState()
+    @State private var updater = UpdateManager()
     @Environment(\.openURL) private var openURL
 
     init() {
@@ -21,15 +22,18 @@ struct SprocketApp: App {
         MenuBarExtra {
             PopoverView()
                 .environment(state)
+                .environment(updater)
                 .frame(width: 420, height: 560)
         } label: {
             MenuBarLabel(state: state.menuBarState)
+                .environment(updater)
         }
         .menuBarExtraStyle(.window)
 
         WindowGroup("Welcome", id: "welcome") {
             WelcomeWindow()
                 .environment(state)
+                .environment(updater)
                 .frame(width: 520, height: 580)
         }
         .windowResizability(.contentSize)
@@ -37,6 +41,7 @@ struct SprocketApp: App {
         Settings {
             SettingsWindow()
                 .environment(state)
+                .environment(updater)
                 .frame(width: 660, height: 520)
         }
     }
@@ -45,6 +50,8 @@ struct SprocketApp: App {
 private struct MenuBarLabel: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
+    @Environment(UpdateManager.self) private var updater
+    @State private var didCheckForUpdates = false
     let state: MenuBarState
 
     var body: some View {
@@ -54,6 +61,11 @@ private struct MenuBarLabel: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .sprocketShowSettings)) { _ in
                 openSettings()
+            }
+            .task {
+                guard !didCheckForUpdates else { return }
+                didCheckForUpdates = true
+                await updater.checkOnLaunchIfNeeded()
             }
     }
 }

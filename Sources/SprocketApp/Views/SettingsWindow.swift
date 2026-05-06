@@ -24,6 +24,9 @@ struct SettingsWindow: View {
 
 private struct GeneralTab: View {
     @Environment(AppState.self) private var state
+    @Environment(UpdateManager.self) private var updater
+    @AppStorage("updates.autoCheck") private var autoCheckForUpdates = true
+    @AppStorage("updates.autoInstall") private var autoInstallUpdates = false
     @State private var launchAtLogin = true
     @State private var batterySaver = true
     @State private var pauseOnNoNetwork = true
@@ -56,8 +59,78 @@ private struct GeneralTab: View {
                 }
                 .pickerStyle(.segmented)
             }
+            Section("Updates") {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Current version")
+                        Text(updater.currentVersion)
+                            .font(.system(size: 11.5, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button(updateButtonTitle) {
+                        Task { await updater.checkForUpdates() }
+                    }
+                    .disabled(isUpdateButtonDisabled)
+                }
+                Toggle("Automatically check for updates", isOn: $autoCheckForUpdates)
+                Toggle("Install updates automatically", isOn: $autoInstallUpdates)
+                    .disabled(!autoCheckForUpdates)
+                updateStatusView
+            }
         }
         .formStyle(.grouped)
+    }
+
+    private var updateButtonTitle: String {
+        switch updater.status {
+        case .checking:
+            return "Checking…"
+        default:
+            return "Check Now"
+        }
+    }
+
+    private var isUpdateButtonDisabled: Bool {
+        switch updater.status {
+        case .checking, .downloading, .installing:
+            return true
+        default:
+            return false
+        }
+    }
+
+    @ViewBuilder
+    private var updateStatusView: some View {
+        switch updater.status {
+        case .idle:
+            Text("Checks GitHub Releases for a newer Sprocket build.")
+                .font(.caption).foregroundStyle(.secondary)
+        case .checking:
+            ProgressView("Checking for updates…")
+        case .upToDate:
+            Text("Sprocket is up to date.")
+                .font(.caption).foregroundStyle(.secondary)
+        case .updateAvailable(let update):
+            HStack {
+                Text("Version \(update.version) is available.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button("View Release") { updater.openReleasePage() }
+                Button("Install Update") {
+                    Task { await updater.installAvailableUpdate() }
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        case .downloading(let update):
+            ProgressView("Downloading \(update.version)…")
+        case .installing(let update):
+            ProgressView("Installing \(update.version)…")
+        case .failed(let message):
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(Color.sprocketFailure)
+        }
     }
 }
 
@@ -80,7 +153,7 @@ private struct AccountTab: View {
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button("Sign out") { state.isAuthed = false }
+                    Button("Sign out") { Task { await state.signOut() } }
                         .buttonStyle(.bordered)
                 }
                 .padding(.vertical, 4)
