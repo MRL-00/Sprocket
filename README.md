@@ -1,6 +1,6 @@
 # Sprocket
 
-![alt text](<marketing.png>)
+![Sprocket menu bar app](<marketing.png>)
 **CI status, without the tabs.**
 Sprocket is a tiny macOS menu bar app that watches GitHub Actions across every
 repo you can see — personal, org, collaborator. One glyph reflects the worst
@@ -10,16 +10,14 @@ success); click for the full list; get notified the moment something turns red.
 - **Aggregate status** — one menu bar glyph reflects the worst current state across every watched repo.
 - **Live polling** — ETag-aware. Repos with running jobs poll every 15 s. Battery-aware backoff.
 - **Failure first** — notified on transitions to failure, timed_out, action_required. Coalesced bursts.
-- **Menu bar or terminal** — the `sprocket` CLI shares Keychain with the app; drop it in tmux, your shell prompt, or a script.
 - **Bring your own OAuth app** — your token never leaves your Mac. No shared rate-limit pool, no analytics.
 
 > "I tab into GitHub fifty times a day to check if CI passed. Sprocket replaces
 > that with a glance at the menu bar."
 
-The popover ships Variation A: header with avatar and repo count, segmented
-filter (All / Running / Failing / Recent), org switcher, run rows with status
-dot · repo · workflow · title · branch/event chips · author avatar, and a
-rate-limit footer that's always visible.
+The popover shows your signed-in account, watched repositories, current and
+recent runs, workflow status, branch/event context, authors, and GitHub rate
+limit usage.
 
 ## Requirements
 
@@ -56,50 +54,7 @@ Build a runnable `Sprocket.app` bundle:
 ./Scripts/package_app.sh                       # release
 VERSION=0.2.0 ./Scripts/package_app.sh         # release with bundle version
 SPROCKET_SIGNING=adhoc ./Scripts/package_app.sh # ad-hoc codesign
-SPROCKET_SIGNING=developer-id APP_IDENTITY='Developer ID Application: Your Name (TEAMID)' ./Scripts/package_app.sh
 open build/Sprocket.app
-```
-
-## Release
-
-GitHub releases are created from version tags:
-
-```sh
-git tag v0.2.0
-git push origin v0.2.0
-```
-
-The release workflow builds `Sprocket.app`, signs it with Developer ID,
-notarizes and staples it, archives it as `Sprocket-0.2.0-macos.zip`, uploads
-the zip and checksum to GitHub Releases, generates release notes, and commits
-the updated Homebrew cask checksum back to `main`.
-
-Release signing and notarization require these GitHub Actions secrets:
-
-- `DEVELOPER_ID_CERTIFICATE_BASE64` — base64-encoded `.p12` export of the
-  Developer ID Application certificate and private key.
-- `DEVELOPER_ID_CERTIFICATE_PASSWORD` — password for the `.p12` export.
-- `DEVELOPER_ID_APPLICATION_IDENTITY` — codesigning identity, for example
-  `Developer ID Application: Your Name (TEAMID)`.
-- `APP_STORE_CONNECT_API_KEY_BASE64` — base64-encoded App Store Connect API
-  key `.p8` file.
-- `APP_STORE_CONNECT_KEY_ID` — App Store Connect API key ID.
-- `APP_STORE_CONNECT_ISSUER_ID` — App Store Connect issuer ID.
-
-To update the cask by hand from a local artifact:
-
-```sh
-./Scripts/update_cask.sh 0.2.0 build/Sprocket-0.2.0-macos.zip
-git add Casks/sprocket.rb
-git commit -m "Update Homebrew cask to 0.2.0"
-git push
-```
-
-## Mock mode
-
-```sh
-swift run Sprocket --mock     # runs the app against MockData
-swift run sprocket status     # CLI summary, also mock-backed
 ```
 
 ## Auth
@@ -113,10 +68,8 @@ macOS Keychain under `nz.matt.sprocket.github.token`.
 
 ## Layout
 
-- `Sources/SprocketKit/` — models, actors, mock data (no UI)
+- `Sources/SprocketKit/` — models and actors shared by the app and CLI
 - `Sources/SprocketApp/` — the menu bar app target (module `Sprocket`)
 - `Sources/SprocketCommandLine/` — the `sprocket` CLI (target `SprocketCLI`)
 - `Tests/SprocketKitTests/` — Swift Testing suites
 - `Scripts/package_app.sh` — wraps `swift build` output into `Sprocket.app`
-
-## CLI (Coming Soon...)
