@@ -72,6 +72,7 @@ struct RunRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
             Avatar(login: run.actor,
+                   imageURL: run.actorAvatarURL,
                    hue: Double(run.actorHue),
                    size: density == .compact ? 14 : 16)
                 .padding(.top, density == .compact ? 0 : 3)

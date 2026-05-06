@@ -123,9 +123,9 @@ public actor GitHubClient {
         let (data, resp) = try await session.data(for: req)
         try check(resp, data: data)
         absorbRateLimit(resp)
-        struct U: Decodable { let login: String; let name: String?; let id: Int }
+        struct U: Decodable { let login: String; let name: String?; let id: Int; let avatar_url: URL? }
         let u = try JSONDecoder().decode(U.self, from: data)
-        return GitHubUser(login: u.login, name: u.name, avatarHue: u.id % 360)
+        return GitHubUser(login: u.login, name: u.name, avatarHue: u.id % 360, avatarURL: u.avatar_url)
     }
 
     /// `/user/repos?sort=pushed&per_page=N`. Returns repos that have pushed activity recently.
@@ -170,7 +170,7 @@ public actor GitHubClient {
             let updated_at: Date?
             let html_url: URL
             let actor: Actor?
-            struct Actor: Decodable { let login: String; let id: Int }
+            struct Actor: Decodable { let login: String; let id: Int; let avatar_url: URL? }
         }
         let dec = JSONDecoder()
         dec.dateDecodingStrategy = .iso8601
@@ -190,6 +190,7 @@ public actor GitHubClient {
                 runNumber: r.run_number ?? 0,
                 actor: r.actor?.login ?? "",
                 actorHue: (r.actor?.id ?? 0) % 360,
+                actorAvatarURL: r.actor?.avatar_url,
                 startedAt: started,
                 updatedAt: updated,
                 durationSeconds: max(0, Int(updated.timeIntervalSince(started))),

@@ -69,6 +69,7 @@ private struct AccountTab: View {
             Section("Signed in") {
                 HStack(spacing: 12) {
                     Avatar(login: state.user?.login ?? "?",
+                           imageURL: state.user?.avatarURL,
                            hue: Double(state.user?.avatarHue ?? 200),
                            size: 44)
                     VStack(alignment: .leading, spacing: 2) {

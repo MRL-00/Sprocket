@@ -88,6 +88,7 @@ private struct HeaderRow: View {
     var body: some View {
         HStack(spacing: 10) {
             Avatar(login: state.user?.login ?? "?",
+                   imageURL: state.user?.avatarURL,
                    hue: Double(state.user?.avatarHue ?? 200),
                    size: 22)
             VStack(alignment: .leading, spacing: 1) {

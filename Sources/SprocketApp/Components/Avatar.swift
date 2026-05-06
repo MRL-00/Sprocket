@@ -2,15 +2,38 @@ import SwiftUI
 
 struct Avatar: View {
     let login: String
+    var imageURL: URL? = nil
     var hue: Double = 200
     var size: CGFloat = 16
 
     var body: some View {
+        ZStack {
+            fallback
+
+            if let imageURL {
+                AsyncImage(url: imageURL) { phase in
+                    if let image = phase.image {
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    }
+                }
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(Circle())
+        .overlay(
+            Circle().strokeBorder(.black.opacity(0.15), lineWidth: 0.5)
+        )
+        .accessibilityLabel(login.isEmpty ? "Avatar" : "\(login) avatar")
+    }
+
+    private var fallback: some View {
         let initial = String(login.prefix(1)).uppercased()
         let top = Color(hue: hue / 360, saturation: 0.45, brightness: 0.78)
         let bottom = Color(hue: ((hue + 40).truncatingRemainder(dividingBy: 360)) / 360,
                            saturation: 0.55, brightness: 0.62)
-        ZStack {
+        return ZStack {
             LinearGradient(colors: [top, bottom], startPoint: .topLeading, endPoint: .bottomTrailing)
             Text(initial)
                 .font(.system(size: size * 0.5, weight: .semibold, design: .default))
@@ -18,10 +41,6 @@ struct Avatar: View {
                 .kerning(-0.2)
         }
         .frame(width: size, height: size)
-        .clipShape(Circle())
-        .overlay(
-            Circle().strokeBorder(.black.opacity(0.15), lineWidth: 0.5)
-        )
     }
 }
 

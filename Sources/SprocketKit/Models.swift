@@ -62,6 +62,7 @@ public struct WorkflowRun: Sendable, Identifiable, Hashable, Codable {
     public let runNumber: Int
     public let actor: String
     public let actorHue: Int                // for procedural avatar tint
+    public let actorAvatarURL: URL?
     public let startedAt: Date
     public let updatedAt: Date
     public let durationSeconds: Int
@@ -79,6 +80,7 @@ public struct WorkflowRun: Sendable, Identifiable, Hashable, Codable {
         runNumber: Int,
         actor: String,
         actorHue: Int,
+        actorAvatarURL: URL? = nil,
         startedAt: Date,
         updatedAt: Date,
         durationSeconds: Int,
@@ -95,6 +97,7 @@ public struct WorkflowRun: Sendable, Identifiable, Hashable, Codable {
         self.runNumber = runNumber
         self.actor = actor
         self.actorHue = actorHue
+        self.actorAvatarURL = actorAvatarURL
         self.startedAt = startedAt
         self.updatedAt = updatedAt
         self.durationSeconds = durationSeconds
@@ -143,11 +146,13 @@ public struct GitHubUser: Sendable, Hashable, Codable {
     public let login: String
     public let name: String?
     public let avatarHue: Int
+    public let avatarURL: URL?
 
-    public init(login: String, name: String?, avatarHue: Int = 200) {
+    public init(login: String, name: String?, avatarHue: Int = 200, avatarURL: URL? = nil) {
         self.login = login
         self.name = name
         self.avatarHue = avatarHue
+        self.avatarURL = avatarURL
     }
 }
 
