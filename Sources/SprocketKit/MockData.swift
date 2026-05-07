@@ -130,6 +130,65 @@ public enum MockData {
         ]
     }
 
+    public static func jobs(forRunID runID: Int64) -> [WorkflowJob] {
+        let now = Date()
+        func ago(_ s: TimeInterval) -> Date { now.addingTimeInterval(-s) }
+        // Deterministic mock — pick a shape based on the run's effective status.
+        guard let run = runs.first(where: { $0.id == runID }) else { return [] }
+        let url = run.htmlURL.appendingPathComponent("jobs")
+        switch run.effective {
+        case .running, .queued:
+            return [
+                WorkflowJob(id: runID * 10 + 1, runID: runID, name: "lint",
+                            status: .completed, conclusion: .success,
+                            startedAt: ago(120), completedAt: ago(98),
+                            durationSeconds: 22, htmlURL: url, steps: []),
+                WorkflowJob(id: runID * 10 + 2, runID: runID, name: "test (macOS)",
+                            status: .inProgress, conclusion: nil,
+                            startedAt: ago(90), completedAt: nil,
+                            durationSeconds: 90, htmlURL: url, steps: []),
+                WorkflowJob(id: runID * 10 + 3, runID: runID, name: "test (linux)",
+                            status: .queued, conclusion: nil,
+                            startedAt: ago(2), completedAt: nil,
+                            durationSeconds: 0, htmlURL: url, steps: []),
+            ]
+        case .failure, .timedOut, .actionRequired:
+            return [
+                WorkflowJob(id: runID * 10 + 1, runID: runID, name: "lint",
+                            status: .completed, conclusion: .success,
+                            startedAt: ago(300), completedAt: ago(278),
+                            durationSeconds: 22, htmlURL: url, steps: []),
+                WorkflowJob(id: runID * 10 + 2, runID: runID, name: "test (macOS)",
+                            status: .completed, conclusion: .failure,
+                            startedAt: ago(270), completedAt: ago(78),
+                            durationSeconds: 192, htmlURL: url,
+                            steps: [
+                                WorkflowStep(number: 1, name: "Set up", status: .completed, conclusion: .success, startedAt: ago(270), completedAt: ago(265)),
+                                WorkflowStep(number: 2, name: "Run swift test", status: .completed, conclusion: .failure, startedAt: ago(264), completedAt: ago(80)),
+                            ]),
+                WorkflowJob(id: runID * 10 + 3, runID: runID, name: "build · release",
+                            status: .completed, conclusion: .skipped,
+                            startedAt: ago(78), completedAt: ago(78),
+                            durationSeconds: 0, htmlURL: url, steps: []),
+            ]
+        default:
+            return [
+                WorkflowJob(id: runID * 10 + 1, runID: runID, name: "lint",
+                            status: .completed, conclusion: .success,
+                            startedAt: ago(400), completedAt: ago(378),
+                            durationSeconds: 22, htmlURL: url, steps: []),
+                WorkflowJob(id: runID * 10 + 2, runID: runID, name: "test",
+                            status: .completed, conclusion: .success,
+                            startedAt: ago(370), completedAt: ago(190),
+                            durationSeconds: 180, htmlURL: url, steps: []),
+                WorkflowJob(id: runID * 10 + 3, runID: runID, name: "build · release",
+                            status: .completed, conclusion: .success,
+                            startedAt: ago(188), completedAt: ago(48),
+                            durationSeconds: 140, htmlURL: url, steps: []),
+            ]
+        }
+    }
+
     public static var repositories: [Repository] {
         [
             .init(id: 1,  fullName: "mattnz/orbital-cms",         org: "Personal",       isArchived: false, isFork: false, watching: true,  muted: false),

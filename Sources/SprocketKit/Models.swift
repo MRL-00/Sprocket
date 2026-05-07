@@ -122,6 +122,109 @@ public struct WorkflowRun: Sendable, Identifiable, Hashable, Codable {
     }
 }
 
+public struct WorkflowStep: Sendable, Hashable, Codable, Identifiable {
+    public let number: Int
+    public let name: String
+    public let status: RunStatus
+    public let conclusion: RunConclusion?
+    public let startedAt: Date?
+    public let completedAt: Date?
+
+    public init(
+        number: Int,
+        name: String,
+        status: RunStatus,
+        conclusion: RunConclusion?,
+        startedAt: Date?,
+        completedAt: Date?
+    ) {
+        self.number = number
+        self.name = name
+        self.status = status
+        self.conclusion = conclusion
+        self.startedAt = startedAt
+        self.completedAt = completedAt
+    }
+
+    public var id: Int { number }
+
+    public var effective: EffectiveStatus {
+        switch status {
+        case .queued, .waiting, .requested, .pending: return .queued
+        case .inProgress: return .running
+        case .completed:
+            switch conclusion {
+            case .success: return .success
+            case .failure: return .failure
+            case .cancelled: return .cancelled
+            case .skipped: return .skipped
+            case .timedOut: return .timedOut
+            case .actionRequired: return .actionRequired
+            case .neutral, .stale, .none: return .unknown
+            }
+        }
+    }
+}
+
+public struct WorkflowJob: Sendable, Identifiable, Hashable, Codable {
+    public let id: Int64
+    public let runID: Int64
+    public let name: String
+    public let status: RunStatus
+    public let conclusion: RunConclusion?
+    public let startedAt: Date
+    public let completedAt: Date?
+    public let durationSeconds: Int
+    public let htmlURL: URL?
+    public let steps: [WorkflowStep]
+
+    public init(
+        id: Int64,
+        runID: Int64,
+        name: String,
+        status: RunStatus,
+        conclusion: RunConclusion?,
+        startedAt: Date,
+        completedAt: Date?,
+        durationSeconds: Int,
+        htmlURL: URL?,
+        steps: [WorkflowStep]
+    ) {
+        self.id = id
+        self.runID = runID
+        self.name = name
+        self.status = status
+        self.conclusion = conclusion
+        self.startedAt = startedAt
+        self.completedAt = completedAt
+        self.durationSeconds = durationSeconds
+        self.htmlURL = htmlURL
+        self.steps = steps
+    }
+
+    public var effective: EffectiveStatus {
+        switch status {
+        case .queued, .waiting, .requested, .pending: return .queued
+        case .inProgress: return .running
+        case .completed:
+            switch conclusion {
+            case .success: return .success
+            case .failure: return .failure
+            case .cancelled: return .cancelled
+            case .skipped: return .skipped
+            case .timedOut: return .timedOut
+            case .actionRequired: return .actionRequired
+            case .neutral, .stale, .none: return .unknown
+            }
+        }
+    }
+
+    /// First failing step name, if any — handy for "failed at: …" labels.
+    public var firstFailingStepName: String? {
+        steps.first(where: { $0.effective.isFailure })?.name
+    }
+}
+
 public struct Repository: Sendable, Identifiable, Hashable, Codable {
     public let id: Int64
     public let fullName: String   // "org/repo"

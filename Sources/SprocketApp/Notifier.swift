@@ -59,6 +59,29 @@ enum Notifier {
         UNUserNotificationCenter.current().add(req)
     }
 
+    static func postUsageThreshold(account: String, threshold: Int, percentUsed: Int, sound selectedSound: NotificationSound) {
+        guard isAvailable else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "Actions usage · \(account)"
+        content.body = "Crossed \(threshold)% of included minutes (\(percentUsed)% used)"
+        content.sound = sound(for: selectedSound)
+        let req = UNNotificationRequest(
+            identifier: "sprocket.usage.\(account).\(threshold)",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(req)
+    }
+
+    @MainActor
+    static func handleUsage(alerts: [PlannedNotification], sound selectedSound: NotificationSound) {
+        for alert in alerts {
+            if case let .usageThreshold(account, threshold, percent) = alert {
+                postUsageThreshold(account: account, threshold: threshold, percentUsed: percent, sound: selectedSound)
+            }
+        }
+    }
+
     static func postSummary(failureCount: Int, sound selectedSound: NotificationSound) {
         guard isAvailable else { return }
         let content = UNMutableNotificationContent()
@@ -80,7 +103,13 @@ enum Notifier {
             events: events,
             preferences: preferences,
             currentUserLogin: currentUserLogin,
-            isRepositoryMuted: { settings.isRepositoryMuted($0) }
+            isRepositoryMuted: { settings.isRepositoryMuted($0) },
+            shouldNotifyOnFailure: { run in
+                settings.shouldNotifyOnFailure(repo: run.repo, branch: run.branch)
+            },
+            branchMatches: { run in
+                settings.branchMatches(repo: run.repo, branch: run.branch)
+            }
         )
         for notification in planned {
             switch notification {
@@ -90,6 +119,8 @@ enum Notifier {
                 postBackToGreen(run, sound: preferences.sound)
             case .summary(let count):
                 postSummary(failureCount: count, sound: preferences.sound)
+            case let .usageThreshold(account, threshold, percent):
+                postUsageThreshold(account: account, threshold: threshold, percentUsed: percent, sound: preferences.sound)
             }
         }
     }

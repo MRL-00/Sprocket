@@ -57,6 +57,10 @@ public final class AppState {
     /// (e.g. the app's `Notifier`) can subscribe at startup.
     public var onStateChanges: (@MainActor ([RunStateChange]) -> Void)?
 
+    /// Hook for Actions usage threshold crossings. Consumers (e.g. `Notifier`)
+    /// receive a list of `PlannedNotification.usageThreshold(...)` events.
+    public var onUsageAlerts: (@MainActor ([PlannedNotification]) -> Void)?
+
     private var pollTask: Task<Void, Never>?
     private let fastLaneSeconds: Int = 15
     private var lastActionsUsageRefresh: Date?
@@ -257,6 +261,78 @@ public final class AppState {
         pendingUserCode = nil; pendingVerificationURL = nil
     }
 
+    // MARK: - Run actions
+
+    /// Re-run an entire workflow. Optimistically marks the run as queued so
+    /// the popover reflects the action immediately; the next refresh will
+    /// reconcile against GitHub's actual state.
+    public func rerunRun(_ run: WorkflowRun) async {
+        guard !mockMode else {
+            optimisticallyMarkQueued(runID: run.id)
+            return
+        }
+        do {
+            try await client.rerunRun(repo: run.repo, runID: run.id)
+            optimisticallyMarkQueued(runID: run.id)
+            await refresh()
+        } catch {
+            lastFetchError = "Re-run failed: \(error)"
+            stateLog.info("rerun failed for \(run.repo)#\(run.id) — \(error)")
+        }
+    }
+
+    /// Re-run only the failed jobs of a workflow.
+    public func rerunFailedJobs(_ run: WorkflowRun) async {
+        guard !mockMode else {
+            optimisticallyMarkQueued(runID: run.id)
+            return
+        }
+        do {
+            try await client.rerunFailedJobs(repo: run.repo, runID: run.id)
+            optimisticallyMarkQueued(runID: run.id)
+            await refresh()
+        } catch {
+            lastFetchError = "Re-run failed jobs failed: \(error)"
+            stateLog.info("rerun-failed-jobs failed for \(run.repo)#\(run.id) — \(error)")
+        }
+    }
+
+    /// Cancel an in-progress run.
+    public func cancelRun(_ run: WorkflowRun) async {
+        guard !mockMode else { return }
+        do {
+            try await client.cancelRun(repo: run.repo, runID: run.id)
+            await refresh()
+        } catch {
+            lastFetchError = "Cancel failed: \(error)"
+            stateLog.info("cancel failed for \(run.repo)#\(run.id) — \(error)")
+        }
+    }
+
+    private func optimisticallyMarkQueued(runID: Int64) {
+        guard let idx = runs.firstIndex(where: { $0.id == runID }) else { return }
+        let original = runs[idx]
+        let now = Date()
+        runs[idx] = WorkflowRun(
+            id: original.id,
+            repo: original.repo,
+            workflowName: original.workflowName,
+            displayTitle: original.displayTitle,
+            branch: original.branch,
+            event: original.event,
+            status: .queued,
+            conclusion: nil,
+            runNumber: original.runNumber,
+            actor: original.actor,
+            actorHue: original.actorHue,
+            actorAvatarURL: original.actorAvatarURL,
+            startedAt: now,
+            updatedAt: now,
+            durationSeconds: 0,
+            htmlURL: original.htmlURL
+        )
+    }
+
     public func signOut() async {
         stopPolling()
         await auth.clearCredentials()
@@ -431,6 +507,25 @@ public final class AppState {
             keyed[account.id] = account
         }
         actionsUsageAccounts = keyed.values.sorted { $0.id < $1.id }
+        evaluateUsageAlerts()
+    }
+
+    private func evaluateUsageAlerts() {
+        let prefs = settings.notificationPreferences
+        guard prefs.actionsUsageAlerts, !prefs.actionsUsageThresholds.isEmpty else { return }
+        var tracker = settings.usageAlertTracker
+        let snapshot = tracker
+        let planned = tracker.evaluate(
+            accounts: actionsUsageAccounts,
+            thresholds: prefs.actionsUsageThresholds,
+            isQuiet: prefs.isInQuietHours()
+        )
+        if tracker != snapshot {
+            settings.usageAlertTracker = tracker
+        }
+        if !planned.isEmpty {
+            onUsageAlerts?(planned)
+        }
     }
 
     private func applyActionsUsageForCurrentScope() {

@@ -31,6 +31,9 @@ struct WelcomeWindow: View {
             footer
         }
         .background(.regularMaterial)
+        .onAppear {
+            AppWindowController.bringWelcomeToFront()
+        }
         .onChange(of: state.isAuthed) { _, authed in
             if authed { closeWelcomeWindow() }
         }

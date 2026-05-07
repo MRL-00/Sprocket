@@ -62,6 +62,48 @@ struct AppSettingsTests {
         #expect(!reloaded.applyPreferences(to: active).muted)
     }
 
+    @Test("older notification preferences migrate with usage alert defaults")
+    func olderNotificationPreferencesMigrate() throws {
+        let defaults = try isolatedDefaults()
+        let data = try JSONEncoder().encode(LegacyNotificationPreferences(
+            onFailure: false,
+            backToGreen: true,
+            myRunsOnly: true,
+            sound: .none,
+            quietHours: false,
+            coalesceFailures: false
+        ))
+        defaults.set(data, forKey: AppSettings.Defaults.notificationPreferences)
+
+        let settings = AppSettings(defaults: defaults)
+
+        #expect(settings.notificationPreferences.onFailure == false)
+        #expect(settings.notificationPreferences.backToGreen == true)
+        #expect(settings.notificationPreferences.myRunsOnly == true)
+        #expect(settings.notificationPreferences.sound == .none)
+        #expect(settings.notificationPreferences.quietHours == false)
+        #expect(settings.notificationPreferences.coalesceFailures == false)
+        #expect(settings.notificationPreferences.actionsUsageAlerts == true)
+        #expect(settings.notificationPreferences.actionsUsageThresholds == [75, 90, 100])
+    }
+
+    @Test("repository watch changes preserve notification rules")
+    func repositoryWatchChangesPreserveNotificationRules() throws {
+        let defaults = try isolatedDefaults()
+        let settings = AppSettings(defaults: defaults)
+        let repository = repo("acme/app")
+
+        settings.setRepositoryNotificationOverride(repository.fullName, notifyOnFailure: false)
+        settings.setRepositoryWatchedBranches(repository.fullName, branches: ["main", "release/*"])
+        settings.setRepository(repository, watching: false, muted: true)
+
+        let preference = try #require(settings.repositoryPreferences[repository.fullName])
+        #expect(preference.watching == false)
+        #expect(preference.muted == true)
+        #expect(preference.notifyOnFailure == false)
+        #expect(preference.watchedBranches == ["main", "release/*"])
+    }
+
     @Test("GitHub Enterprise API URLs produce matching web registration URLs")
     func enterpriseRegistrationURL() throws {
         let defaults = try isolatedDefaults()
@@ -91,5 +133,14 @@ struct AppSettingsTests {
             watching: true,
             muted: false
         )
+    }
+
+    private struct LegacyNotificationPreferences: Encodable {
+        let onFailure: Bool
+        let backToGreen: Bool
+        let myRunsOnly: Bool
+        let sound: NotificationSound
+        let quietHours: Bool
+        let coalesceFailures: Bool
     }
 }

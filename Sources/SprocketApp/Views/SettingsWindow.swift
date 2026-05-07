@@ -240,6 +240,7 @@ private struct AccountTab: View {
 private struct ReposTab: View {
     @Environment(AppState.self) private var state
     @State private var query = ""
+    @State private var selection: Repository.ID?
 
     var body: some View {
         @Bindable var settings = state.settings
@@ -266,7 +267,7 @@ private struct ReposTab: View {
                     state.repositories = state.repositories.map { settings.applyPreferences(to: $0) }
                 } label: { Label("Mute forks", systemImage: "tuningfork") }
             }
-            Table(filtered) {
+            Table(filtered, selection: $selection) {
                 TableColumn("") { (it: Repository) in
                     Button {
                         toggle(repository: it)
@@ -290,6 +291,21 @@ private struct ReposTab: View {
                     Text(it.org).foregroundStyle(.secondary).font(.system(size: 11))
                 }
                 .width(110)
+                TableColumn("Notify") { (it: Repository) in
+                    Text(notifyLabel(for: it))
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                .width(120)
+            }
+            if let selected = selectedRepository {
+                RepoNotificationRules(repository: selected)
+                    .padding(.top, 4)
+            } else {
+                Text("Select a repository to override its notification rules.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }
@@ -300,12 +316,104 @@ private struct ReposTab: View {
         return state.repositories.filter { $0.fullName.lowercased().contains(q) }
     }
 
+    private var selectedRepository: Repository? {
+        guard let selection else { return nil }
+        return state.repositories.first(where: { $0.id == selection })
+    }
+
+    private func notifyLabel(for repo: Repository) -> String {
+        let pref = state.settings.repositoryPreferences[repo.fullName]
+        let global = state.settings.notificationPreferences.onFailure
+        let onFailure = pref?.notifyOnFailure ?? global
+        var parts: [String] = []
+        parts.append(onFailure ? "On failure" : "Silent")
+        if let branches = pref?.watchedBranches, !branches.isEmpty {
+            parts.append(branches.joined(separator: ", "))
+        }
+        return parts.joined(separator: " · ")
+    }
+
     private func toggle(repository: Repository) {
         let muted = !repository.muted
         state.settings.setRepository(repository, watching: !muted, muted: muted)
         state.repositories = state.repositories.map { repo in
             repo.id == repository.id ? state.settings.applyPreferences(to: repo) : repo
         }
+    }
+}
+
+private struct RepoNotificationRules: View {
+    let repository: Repository
+    @Environment(AppState.self) private var state
+    @State private var branchesText: String = ""
+    @FocusState private var branchesFieldFocused: Bool
+
+    enum NotifyOverride: Hashable { case global, on, off }
+
+    var body: some View {
+        let pref = state.settings.repositoryPreferences[repository.fullName]
+        Form {
+            Section("Notification rules · \(repository.fullName)") {
+                Picker("On failure", selection: Binding(
+                    get: { currentOverride(pref) },
+                    set: { applyOverride($0) }
+                )) {
+                    Text("Use global setting").tag(NotifyOverride.global)
+                    Text("Always notify").tag(NotifyOverride.on)
+                    Text("Never notify").tag(NotifyOverride.off)
+                }
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Watched branches")
+                    Spacer()
+                    TextField("e.g. main, release/*", text: $branchesText)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 280)
+                        .focused($branchesFieldFocused)
+                        .onSubmit(applyBranches)
+                        .onChange(of: branchesFieldFocused) { _, focused in
+                            if !focused { applyBranches() }
+                        }
+                }
+                Text("Comma-separated. Use `prefix/*` to match a branch prefix. Empty means all branches.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear { syncFromPref(pref) }
+        .onChange(of: repository.id) { _, _ in
+            syncFromPref(state.settings.repositoryPreferences[repository.fullName])
+        }
+    }
+
+    private func currentOverride(_ pref: RepositoryPreference?) -> NotifyOverride {
+        switch pref?.notifyOnFailure {
+        case .none: return .global
+        case .some(true): return .on
+        case .some(false): return .off
+        }
+    }
+
+    private func syncFromPref(_ pref: RepositoryPreference?) {
+        branchesText = (pref?.watchedBranches ?? []).joined(separator: ", ")
+    }
+
+    private func applyOverride(_ value: NotifyOverride) {
+        let mapped: Bool? = {
+            switch value {
+            case .global: return nil
+            case .on: return true
+            case .off: return false
+            }
+        }()
+        state.settings.setRepositoryNotificationOverride(repository.fullName, notifyOnFailure: mapped)
+    }
+
+    private func applyBranches() {
+        let parts = branchesText
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        state.settings.setRepositoryWatchedBranches(repository.fullName, branches: parts.isEmpty ? nil : parts)
     }
 }
 
@@ -352,8 +460,32 @@ private struct NotificationsTab: View {
                     set: { settings.notificationPreferences.coalesceFailures = $0 }
                 ))
             }
+            Section("Actions usage budget") {
+                Toggle("Alert when included CI minutes are used", isOn: Binding(
+                    get: { settings.notificationPreferences.actionsUsageAlerts },
+                    set: { settings.notificationPreferences.actionsUsageAlerts = $0 }
+                ))
+                ForEach(usageThresholdOptions(settings.notificationPreferences.actionsUsageThresholds), id: \.self) { threshold in
+                    Toggle("\(threshold)% of included minutes", isOn: Binding(
+                        get: { settings.notificationPreferences.actionsUsageThresholds.contains(threshold) },
+                        set: { isOn in
+                            var current = Set(settings.notificationPreferences.actionsUsageThresholds)
+                            if isOn { current.insert(threshold) } else { current.remove(threshold) }
+                            settings.notificationPreferences.actionsUsageThresholds = current.sorted()
+                        }
+                    ))
+                    .disabled(!settings.notificationPreferences.actionsUsageAlerts)
+                }
+                Text("Alerts fire at most once per account per month per threshold.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
+    }
+
+    private func usageThresholdOptions(_ configured: [Int]) -> [Int] {
+        let known: Set<Int> = [75, 90, 100, 125]
+        return Array(known.union(configured)).sorted()
     }
 }
 
