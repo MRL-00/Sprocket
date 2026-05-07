@@ -175,6 +175,7 @@ public actor GitHubClient {
             let status: String?
             let conclusion: String?
             let run_number: Int?
+            let created_at: Date?
             let run_started_at: Date?
             let updated_at: Date?
             let html_url: URL
@@ -185,7 +186,8 @@ public actor GitHubClient {
         dec.dateDecodingStrategy = .iso8601
         let env = try dec.decode(Envelope.self, from: data)
         return env.workflow_runs.map { r in
-            let started = r.run_started_at ?? r.updated_at ?? Date()
+            let created = r.created_at ?? r.run_started_at ?? r.updated_at ?? Date()
+            let started = r.run_started_at ?? created
             let updated = r.updated_at ?? started
             return WorkflowRun(
                 id: r.id,
@@ -203,7 +205,8 @@ public actor GitHubClient {
                 startedAt: started,
                 updatedAt: updated,
                 durationSeconds: max(0, Int(updated.timeIntervalSince(started))),
-                htmlURL: r.html_url
+                htmlURL: r.html_url,
+                createdAt: created
             )
         }
     }
@@ -293,6 +296,20 @@ public actor GitHubClient {
                 steps: steps
             )
         }
+    }
+
+    /// `GET /repos/{owner}/{repo}/actions/jobs/{job_id}/logs`. GitHub serves
+    /// a redirected plain-text job log for this endpoint.
+    public func fetchJobLogTail(repo: String, jobID: Int64, lineLimit: Int = 8) async throws -> [String] {
+        var req = makeRequest(path: "/repos/\(repo)/actions/jobs/\(jobID)/logs")
+        req.setValue(nil, forHTTPHeaderField: "If-None-Match")
+        req.setValue("bytes=-65536", forHTTPHeaderField: "Range")
+        let data = try await fetchWithoutConditionalCache(req)
+        let text = String(data: data, encoding: .utf8) ?? ""
+        return text
+            .split(whereSeparator: \.isNewline)
+            .suffix(max(1, lineLimit))
+            .map(String.init)
     }
 
     public func fetchActionsUsage(for owner: String, isOrg: Bool) async throws -> ActionsUsage? {
@@ -420,6 +437,13 @@ public actor GitHubClient {
 
         try check(resp, data: data)
         absorbETag(resp, data: data)
+        return data
+    }
+
+    private func fetchWithoutConditionalCache(_ req: URLRequest) async throws -> Data {
+        let (data, resp) = try await session.data(for: req)
+        absorbRateLimit(resp)
+        try check(resp, data: data)
         return data
     }
 

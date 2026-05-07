@@ -357,12 +357,18 @@ private struct RunListView: View {
             } else if filtered.isEmpty {
                 EmptyPlaceholder()
             } else {
-                ScrollView(.vertical) {
-                    LazyVStack(spacing: 0) {
-                        ForEach(filtered) { run in
-                            RunRow(run: run)
-                            Divider().opacity(0.4)
+                TimelineView(.periodic(from: .now, by: 1)) { timeline in
+                    ScrollView(.vertical) {
+                        LazyVStack(spacing: 0) {
+                            ForEach(filtered) { run in
+                                RunRow(run: run, now: timeline.date)
+                                    .equatable()
+                                Divider().opacity(0.4)
+                            }
                         }
+                    }
+                    .onChange(of: Int(timeline.date.timeIntervalSince1970) / 10) { _, _ in
+                        state.evaluateLongRunAlerts(now: timeline.date)
                     }
                 }
             }
@@ -456,6 +462,40 @@ private struct FooterRow: View {
                     .foregroundStyle(.tertiary)
             }
             Spacer(minLength: 0)
+            Menu {
+                let repoBreakdown = state.estimatedWorkflowCostBreakdown(groupByWorkflow: false)
+                let workflowBreakdown = state.estimatedWorkflowCostBreakdown(groupByWorkflow: true)
+                if let projected = state.projectedEndOfMonthMinutes() {
+                    Text("Projected EOM: \(Formatting.compactNumber(projected)) minutes")
+                } else {
+                    Text("Projected EOM: available after day 5")
+                }
+                Section("By repository · Linux-equivalent estimate") {
+                    if repoBreakdown.isEmpty {
+                        Text("No current-month runs in view")
+                    } else {
+                        ForEach(repoBreakdown.prefix(8)) { item in
+                            Text("\(item.repo) · \(Formatting.compactNumber(item.minutes))m · \(costLabel(item.estimatedCost)) Linux est.")
+                        }
+                    }
+                }
+                Section("By workflow · Linux-equivalent minutes") {
+                    if workflowBreakdown.isEmpty {
+                        Text("No current-month runs in view")
+                    } else {
+                        ForEach(workflowBreakdown.prefix(8)) { item in
+                            Text("\(item.repo) / \(item.workflowName ?? "Workflow") · \(Formatting.compactNumber(item.minutes))m")
+                        }
+                    }
+                }
+            } label: {
+                Image(systemName: "chart.pie")
+                    .font(.system(size: 11))
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .help("Cost breakdown")
+
             Link(destination: URL(string: "https://github.com")!) {
                 HStack(spacing: 3) {
                     Text("Open Actions").font(.system(size: 10.5))
@@ -475,16 +515,26 @@ private struct FooterRow: View {
         "\(Formatting.compactNumber(usage.totalMinutesUsed)) / \(Formatting.compactNumber(usage.includedMinutes)) CI minutes this month"
     }
 
+    private func costLabel(_ value: Double) -> String {
+        value.formatted(.currency(code: "USD").precision(.fractionLength(2)))
+    }
+
     private var actionsUsageHelp: String {
         let accounts = scopedAccounts
         guard !accounts.isEmpty else {
             return "GitHub Actions billing usage is unavailable for this account."
         }
-        return accounts
+        var lines = accounts
             .map { account in
                 "\(account.displayName): \(Formatting.compactNumber(account.usage.totalMinutesUsed)) / \(Formatting.compactNumber(account.usage.includedMinutes)) minutes"
             }
-            .joined(separator: "\n")
+        if let projected = state.projectedEndOfMonthMinutes() {
+            lines.append("Projected end of month: \(Formatting.compactNumber(projected)) minutes")
+        } else {
+            lines.append("Projected end of month: available after day 5")
+        }
+        lines.append("Cost estimates use Linux hosted-runner pricing; GitHub bills Windows and macOS at higher multipliers.")
+        return lines.joined(separator: "\n")
     }
 
     private var scopedAccounts: [ActionsUsageAccount] {

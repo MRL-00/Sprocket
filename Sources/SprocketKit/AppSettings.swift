@@ -21,6 +21,8 @@ public struct NotificationPreferences: Sendable, Codable, Hashable {
     /// Each threshold fires at most once per `crossedThresholds` reset.
     public var actionsUsageThresholds: [Int]
     public var actionsUsageAlerts: Bool
+    public var longRunAlerts: Bool
+    public var longRunAlertPercent: Int
 
     private enum CodingKeys: String, CodingKey {
         case onFailure
@@ -31,6 +33,8 @@ public struct NotificationPreferences: Sendable, Codable, Hashable {
         case coalesceFailures
         case actionsUsageThresholds
         case actionsUsageAlerts
+        case longRunAlerts
+        case longRunAlertPercent
     }
 
     public init(
@@ -41,7 +45,9 @@ public struct NotificationPreferences: Sendable, Codable, Hashable {
         quietHours: Bool = true,
         coalesceFailures: Bool = true,
         actionsUsageThresholds: [Int] = [75, 90, 100],
-        actionsUsageAlerts: Bool = true
+        actionsUsageAlerts: Bool = true,
+        longRunAlerts: Bool = true,
+        longRunAlertPercent: Int = 50
     ) {
         self.onFailure = onFailure
         self.backToGreen = backToGreen
@@ -51,6 +57,8 @@ public struct NotificationPreferences: Sendable, Codable, Hashable {
         self.coalesceFailures = coalesceFailures
         self.actionsUsageThresholds = actionsUsageThresholds
         self.actionsUsageAlerts = actionsUsageAlerts
+        self.longRunAlerts = longRunAlerts
+        self.longRunAlertPercent = longRunAlertPercent
     }
 
     public init(from decoder: Decoder) throws {
@@ -63,6 +71,8 @@ public struct NotificationPreferences: Sendable, Codable, Hashable {
         self.coalesceFailures = try container.decodeIfPresent(Bool.self, forKey: .coalesceFailures) ?? true
         self.actionsUsageThresholds = try container.decodeIfPresent([Int].self, forKey: .actionsUsageThresholds) ?? [75, 90, 100]
         self.actionsUsageAlerts = try container.decodeIfPresent(Bool.self, forKey: .actionsUsageAlerts) ?? true
+        self.longRunAlerts = try container.decodeIfPresent(Bool.self, forKey: .longRunAlerts) ?? true
+        self.longRunAlertPercent = try container.decodeIfPresent(Int.self, forKey: .longRunAlertPercent) ?? 50
     }
 
     public func isInQuietHours(now: Date = Date(), calendar: Calendar = .current) -> Bool {
@@ -126,6 +136,7 @@ public final class AppSettings {
         public static let updatesAutoCheck = "updates.autoCheck"
         public static let updatesAutoInstall = "updates.autoInstall"
         public static let usageAlertTracker = "settings.notifications.usageAlertTracker"
+        public static let pinnedWorkflows = "settings.workflows.pinned"
 
         public static let allKeys: [String] = [
             pollingCadenceSeconds,
@@ -141,6 +152,7 @@ public final class AppSettings {
             updatesAutoCheck,
             updatesAutoInstall,
             usageAlertTracker,
+            pinnedWorkflows,
             AuthStore.clientIDDefaultsKey,
         ]
     }
@@ -174,6 +186,9 @@ public final class AppSettings {
     public var usageAlertTracker: UsageAlertTracker {
         didSet { encode(usageAlertTracker, key: Defaults.usageAlertTracker) }
     }
+    public var pinnedWorkflows: Set<WorkflowKey> {
+        didSet { encode(pinnedWorkflows, key: Defaults.pinnedWorkflows) }
+    }
     public var gitHubAPIBaseURL: String {
         didSet { defaults.set(gitHubAPIBaseURL, forKey: Defaults.gitHubAPIBaseURL) }
     }
@@ -195,6 +210,7 @@ public final class AppSettings {
         self.repositoryPreferences = Self.decode([String: RepositoryPreference].self, from: defaults, key: Defaults.repositoryPreferences) ?? [:]
         self.notificationPreferences = Self.decode(NotificationPreferences.self, from: defaults, key: Defaults.notificationPreferences) ?? NotificationPreferences()
         self.usageAlertTracker = Self.decode(UsageAlertTracker.self, from: defaults, key: Defaults.usageAlertTracker) ?? UsageAlertTracker()
+        self.pinnedWorkflows = Self.decode(Set<WorkflowKey>.self, from: defaults, key: Defaults.pinnedWorkflows) ?? []
         self.gitHubAPIBaseURL = defaults.string(forKey: Defaults.gitHubAPIBaseURL) ?? GitHubClientConfig.defaultBaseURL.absoluteString
         self.userAgent = defaults.string(forKey: Defaults.userAgent) ?? GitHubClientConfig.defaultUserAgent
     }
@@ -323,8 +339,21 @@ public final class AppSettings {
         repositoryPreferences = [:]
         notificationPreferences = NotificationPreferences()
         usageAlertTracker = UsageAlertTracker()
+        pinnedWorkflows = []
         gitHubAPIBaseURL = GitHubClientConfig.defaultBaseURL.absoluteString
         userAgent = GitHubClientConfig.defaultUserAgent
+    }
+
+    public func isPinned(_ run: WorkflowRun) -> Bool {
+        pinnedWorkflows.contains(run.workflowKey)
+    }
+
+    public func togglePinned(_ run: WorkflowRun) {
+        if pinnedWorkflows.contains(run.workflowKey) {
+            pinnedWorkflows.remove(run.workflowKey)
+        } else {
+            pinnedWorkflows.insert(run.workflowKey)
+        }
     }
 
     public static var cacheDirectory: URL {
@@ -368,6 +397,7 @@ public enum PlannedNotification: Sendable, Hashable {
     case backToGreen(WorkflowRun)
     case summary(Int)
     case usageThreshold(account: String, threshold: Int, percentUsed: Int)
+    case longRunning(WorkflowRun, averageSeconds: Int, elapsedSeconds: Int)
 }
 
 /// Tracks Actions usage thresholds we've already alerted on, keyed per month

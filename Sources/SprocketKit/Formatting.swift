@@ -8,6 +8,16 @@ public enum Formatting {
         return String(format: "%dm %02ds", m, s)
     }
 
+    public static func durationShort(seconds: Int) -> String {
+        if seconds < 60 { return "\(seconds)s" }
+        if seconds < 3_600 {
+            return "\(seconds / 60)m"
+        }
+        let hours = seconds / 3_600
+        let minutes = (seconds % 3_600) / 60
+        return minutes == 0 ? "\(hours)h" : "\(hours)h \(minutes)m"
+    }
+
     public static func relative(_ date: Date, now: Date = Date()) -> String {
         let delta = Int(now.timeIntervalSince(date))
         if delta < 60 { return "just now" }
