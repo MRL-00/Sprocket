@@ -4,6 +4,14 @@ import Testing
 
 @Suite("App settings", .serialized)
 struct AppSettingsTests {
+    @Test("defaults to faster polling cadence")
+    func defaultPollingCadence() throws {
+        let defaults = try isolatedDefaults()
+        let settings = AppSettings(defaults: defaults)
+
+        #expect(settings.pollingCadenceSeconds == 30)
+    }
+
     @Test("persists general, API, notification, and repository preferences")
     func persistsPreferences() throws {
         let defaults = try isolatedDefaults()

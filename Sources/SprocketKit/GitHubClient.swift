@@ -19,17 +19,17 @@ public struct GitHubClientConfig: Sendable {
     }
 }
 
-/// Skeleton URLSession-based GitHub client.
+/// URLSession-based GitHub client.
 ///
-/// In a complete build this actor would handle ETag caching, pagination, rate-limit
-/// header parsing, refresh-token retries on 401, and backoff. For this skeleton we
-/// expose just enough surface to drive the UI in mock mode and to wire real calls
-/// from a follow-up.
+/// The client keeps a small in-memory conditional-request cache so polling can
+/// send `If-None-Match` and reuse the previous decoded payload when GitHub
+/// replies with `304 Not Modified`.
 public actor GitHubClient {
     public var config: GitHubClientConfig
     private let session: URLSession
     private var token: String?
     private var etags: [URL: String] = [:]
+    private var responseCache: [URL: Data] = [:]
     private(set) public var rateLimit: RateLimit?
 
     public init(config: GitHubClientConfig = .init(), session: URLSession = .shared) {
@@ -38,7 +38,9 @@ public actor GitHubClient {
     }
 
     public func setToken(_ token: String?) {
+        guard self.token != token else { return }
         self.token = token
+        clearConditionalCache()
     }
 
     public func setClientID(_ id: String?) {
@@ -46,7 +48,9 @@ public actor GitHubClient {
     }
 
     public func setBaseURL(_ url: URL) {
+        guard config.baseURL != url else { return }
         config.baseURL = url
+        clearConditionalCache()
     }
 
     public func setUserAgent(_ userAgent: String) {
@@ -131,9 +135,7 @@ public actor GitHubClient {
 
     public func currentUser() async throws -> GitHubUser {
         let req = makeRequest(path: "/user")
-        let (data, resp) = try await session.data(for: req)
-        try check(resp, data: data)
-        absorbRateLimit(resp)
+        let data = try await fetch(req)
         struct U: Decodable { let login: String; let name: String?; let id: Int; let avatar_url: URL? }
         let u = try JSONDecoder().decode(U.self, from: data)
         return GitHubUser(login: u.login, name: u.name, avatarHue: u.id % 360, avatarURL: u.avatar_url)
@@ -142,9 +144,7 @@ public actor GitHubClient {
     /// `/user/repos?sort=pushed&per_page=N`. Returns repos that have pushed activity recently.
     public func listRepos(perPage: Int = 20) async throws -> [Repository] {
         let req = makeRequest(path: "/user/repos?sort=pushed&per_page=\(perPage)&affiliation=owner,collaborator,organization_member")
-        let (data, resp) = try await session.data(for: req)
-        try check(resp, data: data)
-        absorbRateLimit(resp)
+        let data = try await fetch(req)
         struct R: Decodable {
             let id: Int64
             let full_name: String
@@ -164,9 +164,7 @@ public actor GitHubClient {
     /// `/repos/{owner}/{repo}/actions/runs?per_page=N`. Decodes recent workflow runs.
     public func listRuns(repo: Repository, perPage: Int = 5) async throws -> [WorkflowRun] {
         let req = makeRequest(path: "/repos/\(repo.fullName)/actions/runs?per_page=\(perPage)")
-        let (data, resp) = try await session.data(for: req)
-        try check(resp, data: data)
-        absorbRateLimit(resp)
+        let data = try await fetch(req)
         struct Envelope: Decodable { let workflow_runs: [Raw] }
         struct Raw: Decodable {
             let id: Int64
@@ -292,9 +290,8 @@ public actor GitHubClient {
         var req = URLRequest(url: URL(string: config.baseURL.absoluteString + path)!)
         // GitHub returns `Cache-Control: private, max-age=60` on Actions endpoints,
         // so the default URLSession cache silently serves stale data and polling
-        // never sees new runs. Force a network round-trip every time. (We can layer
-        // ETag-based conditional requests on top later — that needs `etags` to
-        // actually be populated from response headers, which it isn't yet.)
+        // never sees new runs. Force a network round-trip every time; our own
+        // ETag cache still lets unchanged responses come back cheaply as 304s.
         req.cachePolicy = .reloadIgnoringLocalCacheData
         req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         req.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
@@ -302,6 +299,37 @@ public actor GitHubClient {
         if let token { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         if let etag = etags[req.url!] { req.setValue(etag, forHTTPHeaderField: "If-None-Match") }
         return req
+    }
+
+    private func fetch(_ req: URLRequest) async throws -> Data {
+        guard let url = req.url else { throw AuthError.invalidResponse }
+        let (data, resp) = try await session.data(for: req)
+        absorbRateLimit(resp)
+
+        guard let http = resp as? HTTPURLResponse else { throw AuthError.invalidResponse }
+        if http.statusCode == 304 {
+            guard let cached = responseCache[url] else {
+                throw AuthError.other("HTTP 304 without cached response")
+            }
+            return cached
+        }
+
+        try check(resp, data: data)
+        absorbETag(resp, data: data)
+        return data
+    }
+
+    private func absorbETag(_ resp: URLResponse, data: Data) {
+        guard let http = resp as? HTTPURLResponse,
+              let url = http.url,
+              let etag = http.value(forHTTPHeaderField: "ETag") else { return }
+        etags[url] = etag
+        responseCache[url] = data
+    }
+
+    private func clearConditionalCache() {
+        etags.removeAll()
+        responseCache.removeAll()
     }
 
     private func oauthURL(path: String) -> URL {

@@ -8,7 +8,7 @@ current state across every watched repo (failure → running → rate-limited �
 success); click for the full list; get notified the moment something turns red.
 
 - **Aggregate status** — one menu bar glyph reflects the worst current state across every watched repo.
-- **Live polling** — ETag-aware. Repos with running jobs poll every 15 s. Battery-aware backoff.
+- **Live polling** — ETag-aware. Default 30 s refresh cadence; repos with running jobs poll every 15 s. Battery-aware backoff.
 - **Failure first** — notified on transitions to failure, timed_out, action_required. Coalesced bursts.
 - **Bring your own OAuth app** — your token never leaves your Mac. No shared rate-limit pool, no analytics.
 

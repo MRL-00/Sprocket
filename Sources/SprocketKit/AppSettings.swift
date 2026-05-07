@@ -115,7 +115,7 @@ public final class AppSettings {
         self.defaults = defaults
         self.pollingCadenceSeconds = {
             let value = defaults.integer(forKey: Defaults.pollingCadenceSeconds)
-            return value > 0 ? value : 60
+            return value > 0 ? value : 30
         }()
         self.batterySaver = defaults.object(forKey: Defaults.batterySaver) as? Bool ?? true
         self.pauseOnNoNetwork = defaults.object(forKey: Defaults.pauseOnNoNetwork) as? Bool ?? true
@@ -205,7 +205,7 @@ public final class AppSettings {
         for key in Defaults.allKeys {
             defaults.removeObject(forKey: key)
         }
-        pollingCadenceSeconds = 60
+        pollingCadenceSeconds = 30
         batterySaver = true
         pauseOnNoNetwork = true
         density = .comfortable
