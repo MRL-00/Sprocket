@@ -157,6 +157,95 @@ struct ActionsUsageTests {
         #expect(usage.breakdown["UBUNTU"] == 7)
         #expect(usage.breakdown["MACOS"] == 3)
     }
+
+    @Test("workflow run polling stores ETags and reuses cached data on 304")
+    func workflowRunPollingUsesETagCache() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [StubURLProtocol.self]
+        let session = URLSession(configuration: config)
+        var requestCount = 0
+        StubURLProtocol.handler = { request in
+            requestCount += 1
+            #expect(request.url?.path == "/repos/acme/app/actions/runs")
+
+            if requestCount == 1 {
+                #expect(request.value(forHTTPHeaderField: "If-None-Match") == nil)
+                let response = HTTPURLResponse(
+                    url: request.url!,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: [
+                        "ETag": #""runs-v1""#,
+                        "X-RateLimit-Remaining": "4999",
+                        "X-RateLimit-Limit": "5000",
+                        "X-RateLimit-Reset": "1770000000",
+                    ]
+                )!
+                return (Data(Self.workflowRunsBody(id: 42).utf8), response)
+            }
+
+            #expect(request.value(forHTTPHeaderField: "If-None-Match") == #""runs-v1""#)
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 304,
+                httpVersion: nil,
+                headerFields: [
+                    "X-RateLimit-Remaining": "4998",
+                    "X-RateLimit-Limit": "5000",
+                    "X-RateLimit-Reset": "1770000000",
+                ]
+            )!
+            return (Data(), response)
+        }
+
+        let client = GitHubClient(
+            config: GitHubClientConfig(baseURL: URL(string: "https://api.example.test")!),
+            session: session
+        )
+        let repo = Repository(
+            id: 1,
+            fullName: "acme/app",
+            org: "acme",
+            isArchived: false,
+            isFork: false,
+            watching: true,
+            muted: false
+        )
+
+        let first = try await client.listRuns(repo: repo)
+        let second = try await client.listRuns(repo: repo)
+
+        #expect(requestCount == 2)
+        #expect(first.map(\.id) == [42])
+        #expect(second.map(\.id) == [42])
+    }
+
+    private static func workflowRunsBody(id: Int) -> String {
+        """
+        {
+          "workflow_runs": [
+            {
+              "id": \(id),
+              "name": "CI",
+              "display_title": "Run tests",
+              "head_branch": "main",
+              "event": "push",
+              "status": "queued",
+              "conclusion": null,
+              "run_number": 7,
+              "run_started_at": "2026-05-07T01:02:03Z",
+              "updated_at": "2026-05-07T01:02:03Z",
+              "html_url": "https://github.com/acme/app/actions/runs/\(id)",
+              "actor": {
+                "login": "mattnz",
+                "id": 123,
+                "avatar_url": "https://avatars.example.test/u/123"
+              }
+            }
+          ]
+        }
+        """
+    }
 }
 
 private final class StubURLProtocol: URLProtocol, @unchecked Sendable {
