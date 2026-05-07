@@ -266,8 +266,15 @@ public actor GitHubClient {
         for item in summary.usageItems where item.unitType?.lowercased() == "minutes" {
             let used = item.grossQuantity ?? item.quantity ?? 0
             let paidUsed = item.netQuantity ?? 0
-            total += used
-            paid += paidUsed
+            // GitHub charges included-minute quota in Linux-equivalent units:
+            // macOS minutes count 10x and Windows minutes count 2x against the
+            // included allowance. Sum the weighted total so the displayed
+            // usage matches what GitHub bills against the quota.
+            let multiplier = actionsRunnerMultiplier(for: item.sku)
+            total += used * multiplier
+            paid += paidUsed * multiplier
+            // The breakdown is shown to the user as "raw minutes per runner",
+            // so keep it un-weighted.
             breakdown[actionsRunnerKey(for: item.sku), default: 0] += used
         }
 
@@ -284,6 +291,16 @@ public actor GitHubClient {
         if normalized.contains("macos") || normalized.contains("mac") { return "MACOS" }
         if normalized.contains("windows") { return "WINDOWS" }
         return "UBUNTU"
+    }
+
+    /// GitHub Actions billing multipliers against included-minute quota.
+    /// See https://docs.github.com/en/billing/managing-billing-for-github-actions/about-billing-for-github-actions#minute-multipliers
+    private func actionsRunnerMultiplier(for sku: String?) -> Double {
+        switch actionsRunnerKey(for: sku) {
+        case "MACOS": return 10
+        case "WINDOWS": return 2
+        default: return 1
+        }
     }
 
     private func makeRequest(path: String) -> URLRequest {

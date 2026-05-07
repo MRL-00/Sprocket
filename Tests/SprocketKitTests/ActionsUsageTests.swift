@@ -151,9 +151,13 @@ struct ActionsUsageTests {
         )
 
         let usage = try #require(try await client.fetchActionsUsage(for: "mattnz", isOrg: false))
-        #expect(usage.totalMinutesUsed == 10)
+        // 7 Linux minutes (1x) + 2.2 macOS minutes (10x) = 29 weighted minutes,
+        // which matches GitHub's quota accounting against `included_minutes`.
+        #expect(usage.totalMinutesUsed == 29)
         #expect(usage.includedMinutes == 2_000)
-        #expect(usage.paidMinutesUsed == 2)
+        // Paid: 1.2 macOS minutes * 10 = 12 weighted paid minutes.
+        #expect(usage.paidMinutesUsed == 12)
+        // Breakdown is reported as raw minutes per runner, not weighted.
         #expect(usage.breakdown["UBUNTU"] == 7)
         #expect(usage.breakdown["MACOS"] == 3)
     }
