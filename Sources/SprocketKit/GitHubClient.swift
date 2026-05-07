@@ -208,6 +208,93 @@ public actor GitHubClient {
         }
     }
 
+    // MARK: - Run actions
+
+    /// `POST /repos/{owner}/{repo}/actions/runs/{run_id}/rerun`. Re-queues every job in the run.
+    public func rerunRun(repo: String, runID: Int64) async throws {
+        try await postAction(path: "/repos/\(repo)/actions/runs/\(runID)/rerun")
+    }
+
+    /// `POST /repos/{owner}/{repo}/actions/runs/{run_id}/rerun-failed-jobs`. Re-queues only the failed jobs.
+    public func rerunFailedJobs(repo: String, runID: Int64) async throws {
+        try await postAction(path: "/repos/\(repo)/actions/runs/\(runID)/rerun-failed-jobs")
+    }
+
+    /// `POST /repos/{owner}/{repo}/actions/runs/{run_id}/cancel`. Cancels an in-progress run.
+    public func cancelRun(repo: String, runID: Int64) async throws {
+        try await postAction(path: "/repos/\(repo)/actions/runs/\(runID)/cancel")
+    }
+
+    private func postAction(path: String) async throws {
+        var req = makeRequest(path: path)
+        req.httpMethod = "POST"
+        // Conditional GET cache doesn't apply to mutations.
+        req.setValue(nil, forHTTPHeaderField: "If-None-Match")
+        let (data, resp) = try await session.data(for: req)
+        absorbRateLimit(resp)
+        try check(resp, data: data)
+    }
+
+    // MARK: - Jobs
+
+    /// `/repos/{owner}/{repo}/actions/runs/{run_id}/jobs`. Decodes per-job status for a run.
+    public func listJobs(repo: String, runID: Int64) async throws -> [WorkflowJob] {
+        let req = makeRequest(path: "/repos/\(repo)/actions/runs/\(runID)/jobs")
+        let data = try await fetch(req)
+        struct Envelope: Decodable { let jobs: [Raw] }
+        struct Raw: Decodable {
+            let id: Int64
+            let run_id: Int64
+            let name: String
+            let status: String?
+            let conclusion: String?
+            let started_at: Date?
+            let completed_at: Date?
+            let html_url: URL?
+            let steps: [RawStep]?
+        }
+        struct RawStep: Decodable {
+            let name: String
+            let status: String?
+            let conclusion: String?
+            let number: Int?
+            let started_at: Date?
+            let completed_at: Date?
+        }
+        let dec = JSONDecoder()
+        dec.dateDecodingStrategy = .iso8601
+        let env = try dec.decode(Envelope.self, from: data)
+        let now = Date()
+        return env.jobs.map { j in
+            let started = j.started_at ?? now
+            // For in-progress jobs, measure against `now` so callers don't see
+            // a frozen "0s" duration; completed jobs use their `completed_at`.
+            let completed = j.completed_at ?? now
+            let steps: [WorkflowStep] = (j.steps ?? []).map { s in
+                WorkflowStep(
+                    number: s.number ?? 0,
+                    name: s.name,
+                    status: RunStatus(rawValue: s.status ?? "") ?? .completed,
+                    conclusion: s.conclusion.flatMap { RunConclusion(rawValue: $0) },
+                    startedAt: s.started_at,
+                    completedAt: s.completed_at
+                )
+            }
+            return WorkflowJob(
+                id: j.id,
+                runID: j.run_id,
+                name: j.name,
+                status: RunStatus(rawValue: j.status ?? "") ?? .completed,
+                conclusion: j.conclusion.flatMap { RunConclusion(rawValue: $0) },
+                startedAt: started,
+                completedAt: j.completed_at,
+                durationSeconds: max(0, Int(completed.timeIntervalSince(started))),
+                htmlURL: j.html_url,
+                steps: steps
+            )
+        }
+    }
+
     public func fetchActionsUsage(for owner: String, isOrg: Bool) async throws -> ActionsUsage? {
         let encodedOwner = owner.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? owner
         let summaryPath = isOrg

@@ -42,8 +42,8 @@ struct PopoverView: View {
                 Task { @MainActor in
                     await state.bootstrap()
                     if !state.isAuthed {
-                        NSApp.activate(ignoringOtherApps: true)
                         openWindow(id: "welcome")
+                        AppWindowController.bringWelcomeToFrontAfterOpen()
                     }
                 }
             } else if state.isAuthed {
@@ -101,11 +101,11 @@ private struct HeaderRow: View {
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
-            Text("v\(updater.currentVersion)")
+            Text(BuildIdentity.versionLabel(updater.currentVersion))
                 .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(BuildIdentity.isLocalBuild ? Color.sprocketAccent : Color.secondary.opacity(0.7))
                 .lineLimit(1)
-                .help("Sprocket \(updater.currentVersion)")
+                .help(BuildIdentity.helpText(version: updater.currentVersion))
             IconButton(systemName: "arrow.clockwise", help: "Refresh (⌘R)") {
                 Task { await state.refresh() }
             }
@@ -160,15 +160,15 @@ private struct MoreMenu: View {
                 }
             } else {
                 Button("Sign in to GitHub", systemImage: "person.crop.circle.badge.plus") {
-                    NSApp.activate(ignoringOtherApps: true)
                     openWindow(id: "welcome")
+                    AppWindowController.bringWelcomeToFrontAfterOpen()
                 }
                 Divider()
             }
 
             Button("Welcome / Reconfigure…", systemImage: "sparkles") {
-                NSApp.activate(ignoringOtherApps: true)
                 openWindow(id: "welcome")
+                AppWindowController.bringWelcomeToFrontAfterOpen()
             }
 
             Divider()

@@ -16,6 +16,9 @@ struct SprocketApp: App {
         s.onStateChanges = { events in
             Notifier.handle(events: events, settings: s.settings, currentUserLogin: s.user?.login)
         }
+        s.onUsageAlerts = { planned in
+            Notifier.handleUsage(alerts: planned, sound: s.settings.notificationPreferences.sound)
+        }
         _state = State(initialValue: s)
         _updater = State(initialValue: u)
         Notifier.requestAuthorizationIfNeeded()
@@ -62,6 +65,7 @@ private struct MenuBarLabel: View {
         Image(nsImage: MenuBarIconRenderer.image(for: state))
             .onReceive(NotificationCenter.default.publisher(for: .sprocketShowWelcome)) { _ in
                 openWindow(id: "welcome")
+                AppWindowController.bringWelcomeToFrontAfterOpen()
             }
             .onReceive(NotificationCenter.default.publisher(for: .sprocketShowSettings)) { _ in
                 openSettings()

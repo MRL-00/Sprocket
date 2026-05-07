@@ -17,6 +17,21 @@ public struct NotificationPreferences: Sendable, Codable, Hashable {
     public var sound: NotificationSound
     public var quietHours: Bool
     public var coalesceFailures: Bool
+    /// Notify when Actions usage crosses these percentage thresholds (0-200).
+    /// Each threshold fires at most once per `crossedThresholds` reset.
+    public var actionsUsageThresholds: [Int]
+    public var actionsUsageAlerts: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case onFailure
+        case backToGreen
+        case myRunsOnly
+        case sound
+        case quietHours
+        case coalesceFailures
+        case actionsUsageThresholds
+        case actionsUsageAlerts
+    }
 
     public init(
         onFailure: Bool = true,
@@ -24,7 +39,9 @@ public struct NotificationPreferences: Sendable, Codable, Hashable {
         myRunsOnly: Bool = false,
         sound: NotificationSound = .default,
         quietHours: Bool = true,
-        coalesceFailures: Bool = true
+        coalesceFailures: Bool = true,
+        actionsUsageThresholds: [Int] = [75, 90, 100],
+        actionsUsageAlerts: Bool = true
     ) {
         self.onFailure = onFailure
         self.backToGreen = backToGreen
@@ -32,16 +49,64 @@ public struct NotificationPreferences: Sendable, Codable, Hashable {
         self.sound = sound
         self.quietHours = quietHours
         self.coalesceFailures = coalesceFailures
+        self.actionsUsageThresholds = actionsUsageThresholds
+        self.actionsUsageAlerts = actionsUsageAlerts
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.onFailure = try container.decodeIfPresent(Bool.self, forKey: .onFailure) ?? true
+        self.backToGreen = try container.decodeIfPresent(Bool.self, forKey: .backToGreen) ?? false
+        self.myRunsOnly = try container.decodeIfPresent(Bool.self, forKey: .myRunsOnly) ?? false
+        self.sound = try container.decodeIfPresent(NotificationSound.self, forKey: .sound) ?? .default
+        self.quietHours = try container.decodeIfPresent(Bool.self, forKey: .quietHours) ?? true
+        self.coalesceFailures = try container.decodeIfPresent(Bool.self, forKey: .coalesceFailures) ?? true
+        self.actionsUsageThresholds = try container.decodeIfPresent([Int].self, forKey: .actionsUsageThresholds) ?? [75, 90, 100]
+        self.actionsUsageAlerts = try container.decodeIfPresent(Bool.self, forKey: .actionsUsageAlerts) ?? true
+    }
+
+    public func isInQuietHours(now: Date = Date(), calendar: Calendar = .current) -> Bool {
+        guard quietHours else { return false }
+        let hour = calendar.component(.hour, from: now)
+        return hour >= 22 || hour < 8
     }
 }
 
 public struct RepositoryPreference: Sendable, Codable, Hashable {
     public var watching: Bool
     public var muted: Bool
+    /// Per-repo override for `NotificationPreferences.onFailure`. `nil` means
+    /// "follow the global setting".
+    public var notifyOnFailure: Bool?
+    /// If non-empty, only runs whose `branch` matches one of these patterns
+    /// (exact match, or `prefix/*` glob) generate notifications. `nil` or
+    /// empty means "all branches".
+    public var watchedBranches: [String]?
 
-    public init(watching: Bool = true, muted: Bool = false) {
+    public init(
+        watching: Bool = true,
+        muted: Bool = false,
+        notifyOnFailure: Bool? = nil,
+        watchedBranches: [String]? = nil
+    ) {
         self.watching = watching
         self.muted = muted
+        self.notifyOnFailure = notifyOnFailure
+        self.watchedBranches = watchedBranches
+    }
+
+    /// Match a branch against this repo's `watchedBranches`. Always true if no
+    /// rules are configured. Supports trailing `*` wildcard.
+    public func matches(branch: String) -> Bool {
+        guard let patterns = watchedBranches, !patterns.isEmpty else { return true }
+        for pattern in patterns {
+            if pattern == branch { return true }
+            if pattern.hasSuffix("*") {
+                let prefix = pattern.dropLast()
+                if branch.hasPrefix(prefix) { return true }
+            }
+        }
+        return false
     }
 }
 
@@ -60,6 +125,7 @@ public final class AppSettings {
         public static let userAgent = "settings.github.userAgent"
         public static let updatesAutoCheck = "updates.autoCheck"
         public static let updatesAutoInstall = "updates.autoInstall"
+        public static let usageAlertTracker = "settings.notifications.usageAlertTracker"
 
         public static let allKeys: [String] = [
             pollingCadenceSeconds,
@@ -74,6 +140,7 @@ public final class AppSettings {
             userAgent,
             updatesAutoCheck,
             updatesAutoInstall,
+            usageAlertTracker,
             AuthStore.clientIDDefaultsKey,
         ]
     }
@@ -104,6 +171,9 @@ public final class AppSettings {
     public var notificationPreferences: NotificationPreferences {
         didSet { encode(notificationPreferences, key: Defaults.notificationPreferences) }
     }
+    public var usageAlertTracker: UsageAlertTracker {
+        didSet { encode(usageAlertTracker, key: Defaults.usageAlertTracker) }
+    }
     public var gitHubAPIBaseURL: String {
         didSet { defaults.set(gitHubAPIBaseURL, forKey: Defaults.gitHubAPIBaseURL) }
     }
@@ -124,6 +194,7 @@ public final class AppSettings {
         self.muteForks = defaults.object(forKey: Defaults.muteForks) as? Bool ?? false
         self.repositoryPreferences = Self.decode([String: RepositoryPreference].self, from: defaults, key: Defaults.repositoryPreferences) ?? [:]
         self.notificationPreferences = Self.decode(NotificationPreferences.self, from: defaults, key: Defaults.notificationPreferences) ?? NotificationPreferences()
+        self.usageAlertTracker = Self.decode(UsageAlertTracker.self, from: defaults, key: Defaults.usageAlertTracker) ?? UsageAlertTracker()
         self.gitHubAPIBaseURL = defaults.string(forKey: Defaults.gitHubAPIBaseURL) ?? GitHubClientConfig.defaultBaseURL.absoluteString
         self.userAgent = defaults.string(forKey: Defaults.userAgent) ?? GitHubClientConfig.defaultUserAgent
     }
@@ -186,19 +257,57 @@ public final class AppSettings {
     }
 
     public func setRepository(_ repository: Repository, watching: Bool, muted: Bool) {
-        repositoryPreferences[repository.fullName] = RepositoryPreference(watching: watching, muted: muted)
+        var next = repositoryPreferences[repository.fullName] ?? RepositoryPreference()
+        next.watching = watching
+        next.muted = muted
+        repositoryPreferences[repository.fullName] = next
     }
 
     public func muteRepositories(where predicate: (Repository) -> Bool, in repositories: [Repository]) {
         var next = repositoryPreferences
         for repository in repositories where predicate(repository) {
-            next[repository.fullName] = RepositoryPreference(watching: false, muted: true)
+            var preference = next[repository.fullName] ?? RepositoryPreference()
+            preference.watching = false
+            preference.muted = true
+            next[repository.fullName] = preference
         }
         repositoryPreferences = next
     }
 
     public func isRepositoryMuted(_ fullName: String) -> Bool {
         repositoryPreferences[fullName]?.muted == true || repositoryPreferences[fullName]?.watching == false
+    }
+
+    /// Effective per-repo notification preference. Falls back to the global
+    /// `notificationPreferences.onFailure` when no override is set.
+    public func shouldNotifyOnFailure(repo: String, branch: String) -> Bool {
+        let pref = repositoryPreferences[repo]
+        let globalOnFailure = notificationPreferences.onFailure
+        let onFailure = pref?.notifyOnFailure ?? globalOnFailure
+        guard onFailure else { return false }
+        return pref?.matches(branch: branch) ?? true
+    }
+
+    /// Whether a repo's branch passes its `watchedBranches` filter. Used by
+    /// success-path notifications (back-to-green) which respect the branch
+    /// filter but not the failure-specific override.
+    public func branchMatches(repo: String, branch: String) -> Bool {
+        repositoryPreferences[repo]?.matches(branch: branch) ?? true
+    }
+
+    public func setRepositoryNotificationOverride(_ fullName: String, notifyOnFailure: Bool?) {
+        var next = repositoryPreferences[fullName] ?? RepositoryPreference()
+        next.notifyOnFailure = notifyOnFailure
+        repositoryPreferences[fullName] = next
+    }
+
+    public func setRepositoryWatchedBranches(_ fullName: String, branches: [String]?) {
+        var next = repositoryPreferences[fullName] ?? RepositoryPreference()
+        let cleaned = branches?
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        next.watchedBranches = (cleaned?.isEmpty ?? true) ? nil : cleaned
+        repositoryPreferences[fullName] = next
     }
 
     public func resetAll() {
@@ -213,6 +322,7 @@ public final class AppSettings {
         muteForks = false
         repositoryPreferences = [:]
         notificationPreferences = NotificationPreferences()
+        usageAlertTracker = UsageAlertTracker()
         gitHubAPIBaseURL = GitHubClientConfig.defaultBaseURL.absoluteString
         userAgent = GitHubClientConfig.defaultUserAgent
     }
@@ -257,6 +367,63 @@ public enum PlannedNotification: Sendable, Hashable {
     case failure(WorkflowRun)
     case backToGreen(WorkflowRun)
     case summary(Int)
+    case usageThreshold(account: String, threshold: Int, percentUsed: Int)
+}
+
+/// Tracks Actions usage thresholds we've already alerted on, keyed per month
+/// per account, so the user gets at most one notification per crossing.
+public struct UsageAlertTracker: Sendable, Hashable, Codable {
+    public var fired: [String: Set<Int>]
+
+    public init(fired: [String: Set<Int>] = [:]) {
+        self.fired = fired
+    }
+
+    /// Returns thresholds that should fire now. When `isQuiet` is true, no
+    /// notifications are emitted and the tracker is left untouched so the
+    /// crossing fires on the next non-quiet refresh.
+    public mutating func evaluate(
+        accounts: [ActionsUsageAccount],
+        thresholds: [Int],
+        isQuiet: Bool = false,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> [PlannedNotification] {
+        guard !isQuiet else { return [] }
+        let monthKey = Self.monthKey(now: now, calendar: calendar)
+        var planned: [PlannedNotification] = []
+        var working = fired.filter { $0.key.hasPrefix(monthKey + "|") }
+        var changed = working.count != fired.count
+        for account in accounts {
+            let percent = account.usage.includedMinutes > 0
+                ? Int((Double(account.usage.totalMinutesUsed) / Double(account.usage.includedMinutes)) * 100.0)
+                : 0
+            let key = "\(monthKey)|\(account.id)"
+            let original = working[key] ?? []
+            var firedForAccount = original
+            for threshold in thresholds.sorted() where percent >= threshold {
+                if !firedForAccount.contains(threshold) {
+                    firedForAccount.insert(threshold)
+                    planned.append(.usageThreshold(
+                        account: account.displayName,
+                        threshold: threshold,
+                        percentUsed: percent
+                    ))
+                }
+            }
+            if firedForAccount != original {
+                working[key] = firedForAccount
+                changed = true
+            }
+        }
+        if changed { fired = working }
+        return planned
+    }
+
+    static func monthKey(now: Date, calendar: Calendar = .current) -> String {
+        let comps = calendar.dateComponents([.year, .month], from: now)
+        return String(format: "%04d-%02d", comps.year ?? 0, comps.month ?? 0)
+    }
 }
 
 public struct NotificationPlanner: Sendable {
@@ -271,6 +438,8 @@ public struct NotificationPlanner: Sendable {
         preferences: NotificationPreferences,
         currentUserLogin: String?,
         isRepositoryMuted: (String) -> Bool,
+        shouldNotifyOnFailure: ((WorkflowRun) -> Bool)? = nil,
+        branchMatches: ((WorkflowRun) -> Bool)? = nil,
         now: Date = Date(),
         calendar: Calendar = .current
     ) -> [PlannedNotification] {
@@ -285,16 +454,21 @@ public struct NotificationPlanner: Sendable {
         var failures: [WorkflowRun] = []
         var green: [WorkflowRun] = []
 
+        let notifyOnFailure: (WorkflowRun) -> Bool = shouldNotifyOnFailure
+            ?? { _ in preferences.onFailure }
+        let branchMatch: (WorkflowRun) -> Bool = branchMatches ?? { _ in true }
+
         for event in events {
             switch event {
             case .failed(let run):
-                guard preferences.onFailure,
+                guard notifyOnFailure(run),
                       shouldInclude(run, preferences: preferences, currentUserLogin: currentUserLogin),
                       !isRepositoryMuted(run.repo) else { continue }
                 failures.append(run)
             case .succeeded(let run):
                 guard preferences.backToGreen,
                       failingRepositories.contains(run.repo),
+                      branchMatch(run),
                       shouldInclude(run, preferences: preferences, currentUserLogin: currentUserLogin),
                       !isRepositoryMuted(run.repo) else { continue }
                 green.append(run)
@@ -330,8 +504,6 @@ public struct NotificationPlanner: Sendable {
     }
 
     private func isQuiet(now: Date, calendar: Calendar, preferences: NotificationPreferences) -> Bool {
-        guard preferences.quietHours else { return false }
-        let hour = calendar.component(.hour, from: now)
-        return hour >= 22 || hour < 8
+        preferences.isInQuietHours(now: now, calendar: calendar)
     }
 }

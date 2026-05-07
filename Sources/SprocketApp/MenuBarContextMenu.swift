@@ -50,6 +50,17 @@ final class MenuBarContextMenu: NSObject {
         let menu = NSMenu()
         guard let state else { return menu }
 
+        if let updater {
+            let versionItem = NSMenuItem(
+                title: BuildIdentity.versionLabel(updater.currentVersion),
+                action: nil,
+                keyEquivalent: ""
+            )
+            versionItem.isEnabled = false
+            menu.addItem(versionItem)
+            menu.addItem(.separator())
+        }
+
         if state.isAuthed {
             menu.addItem(item("Refresh now", action: #selector(refreshAction), key: "r"))
             menu.addItem(item(state.isPolling ? "Pause polling" : "Resume polling",
