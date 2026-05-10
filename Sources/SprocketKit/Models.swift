@@ -63,6 +63,7 @@ public struct WorkflowRun: Sendable, Identifiable, Hashable, Codable {
     public let actor: String
     public let actorHue: Int                // for procedural avatar tint
     public let actorAvatarURL: URL?
+    public let createdAt: Date
     public let startedAt: Date
     public let updatedAt: Date
     public let durationSeconds: Int
@@ -84,7 +85,8 @@ public struct WorkflowRun: Sendable, Identifiable, Hashable, Codable {
         startedAt: Date,
         updatedAt: Date,
         durationSeconds: Int,
-        htmlURL: URL
+        htmlURL: URL,
+        createdAt: Date? = nil
     ) {
         self.id = id
         self.repo = repo
@@ -98,6 +100,7 @@ public struct WorkflowRun: Sendable, Identifiable, Hashable, Codable {
         self.actor = actor
         self.actorHue = actorHue
         self.actorAvatarURL = actorAvatarURL
+        self.createdAt = createdAt ?? startedAt
         self.startedAt = startedAt
         self.updatedAt = updatedAt
         self.durationSeconds = durationSeconds
@@ -119,6 +122,105 @@ public struct WorkflowRun: Sendable, Identifiable, Hashable, Codable {
             case .neutral, .stale, .none: return .unknown
             }
         }
+    }
+
+    public var workflowKey: WorkflowKey {
+        WorkflowKey(repo: repo, workflowName: workflowName)
+    }
+
+    public var workflowBranchKey: WorkflowBranchKey {
+        WorkflowBranchKey(repo: repo, workflowName: workflowName, branch: branch)
+    }
+
+    public func queuedSeconds(now: Date = Date()) -> Int {
+        switch effective {
+        case .queued:
+            return max(0, Int(now.timeIntervalSince(createdAt)))
+        default:
+            return max(0, Int(startedAt.timeIntervalSince(createdAt)))
+        }
+    }
+
+    public func runningSeconds(now: Date = Date()) -> Int {
+        switch effective {
+        case .running:
+            return max(0, Int(now.timeIntervalSince(startedAt)))
+        case .queued:
+            return 0
+        default:
+            return max(0, durationSeconds)
+        }
+    }
+
+    public func liveElapsedSeconds(now: Date = Date()) -> Int {
+        switch effective {
+        case .running:
+            return max(0, Int(now.timeIntervalSince(startedAt)))
+        case .queued:
+            return max(0, Int(now.timeIntervalSince(createdAt)))
+        default:
+            return durationSeconds
+        }
+    }
+}
+
+public struct WorkflowKey: Sendable, Hashable, Codable {
+    public let repo: String
+    public let workflowName: String
+
+    public init(repo: String, workflowName: String) {
+        self.repo = repo
+        self.workflowName = workflowName
+    }
+}
+
+public struct WorkflowBranchKey: Sendable, Hashable, Codable {
+    public let repo: String
+    public let workflowName: String
+    public let branch: String
+
+    public init(repo: String, workflowName: String, branch: String) {
+        self.repo = repo
+        self.workflowName = workflowName
+        self.branch = branch
+    }
+}
+
+public struct WorkflowTimingStats: Sendable, Hashable {
+    public let completedDurations: [Int]
+    public let averageSeconds: Int?
+    public let p50Seconds: Int?
+    public let trendSeconds: [Int]
+
+    public init(completedDurations: [Int], trendSeconds: [Int]) {
+        self.completedDurations = completedDurations
+        self.trendSeconds = trendSeconds
+        if completedDurations.isEmpty {
+            self.averageSeconds = nil
+            self.p50Seconds = nil
+        } else {
+            self.averageSeconds = completedDurations.reduce(0, +) / completedDurations.count
+            let sorted = completedDurations.sorted()
+            let lower = sorted[(sorted.count - 1) / 2]
+            let upper = sorted[sorted.count / 2]
+            self.p50Seconds = (lower + upper) / 2
+        }
+    }
+}
+
+public struct WorkflowCostBreakdown: Sendable, Identifiable, Hashable {
+    public let id: String
+    public let repo: String
+    public let workflowName: String?
+    public let minutes: Int
+    public let estimatedCost: Double
+
+    public init(repo: String, workflowName: String?, minutes: Int, estimatedCost: Double) {
+        self.repo = repo
+        self.workflowName = workflowName
+        self.minutes = minutes
+        self.estimatedCost = estimatedCost
+        self.id = workflowName.map { "\(repo)|\($0)" } ?? repo
     }
 }
 
@@ -163,6 +265,13 @@ public struct WorkflowStep: Sendable, Hashable, Codable, Identifiable {
             case .neutral, .stale, .none: return .unknown
             }
         }
+    }
+
+    public func durationSeconds(now: Date = Date()) -> Int? {
+        guard let startedAt else { return nil }
+        let end = completedAt ?? (effective.isLive ? now : nil)
+        guard let end else { return nil }
+        return max(0, Int(end.timeIntervalSince(startedAt)))
     }
 }
 
@@ -222,6 +331,21 @@ public struct WorkflowJob: Sendable, Identifiable, Hashable, Codable {
     /// First failing step name, if any — handy for "failed at: …" labels.
     public var firstFailingStepName: String? {
         steps.first(where: { $0.effective.isFailure })?.name
+    }
+
+    public func runningSeconds(now: Date = Date()) -> Int {
+        if effective.isLive {
+            return max(0, Int(now.timeIntervalSince(startedAt)))
+        }
+        return durationSeconds
+    }
+
+    public func slowestSteps(limit: Int = 3, now: Date = Date()) -> [(WorkflowStep, Int)] {
+        steps
+            .compactMap { step in step.durationSeconds(now: now).map { (step, $0) } }
+            .sorted { $0.1 > $1.1 }
+            .prefix(limit)
+            .map { $0 }
     }
 }
 

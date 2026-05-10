@@ -440,6 +440,22 @@ private struct NotificationsTab: View {
                     get: { settings.notificationPreferences.myRunsOnly },
                     set: { settings.notificationPreferences.myRunsOnly = $0 }
                 ))
+                Text("Filters notifications to runs where the GitHub actor matches your login.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Toggle("Long-running run alerts", isOn: Binding(
+                    get: { settings.notificationPreferences.longRunAlerts },
+                    set: { settings.notificationPreferences.longRunAlerts = $0 }
+                ))
+                Stepper(
+                    "Alert when a run exceeds average by \(settings.notificationPreferences.longRunAlertPercent)%",
+                    value: Binding(
+                        get: { settings.notificationPreferences.longRunAlertPercent },
+                        set: { settings.notificationPreferences.longRunAlertPercent = $0 }
+                    ),
+                    in: 10...200,
+                    step: 10
+                )
+                .disabled(!settings.notificationPreferences.longRunAlerts)
             }
             Section("Delivery") {
                 Picker("Sound", selection: Binding(

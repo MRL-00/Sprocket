@@ -73,11 +73,28 @@ enum Notifier {
         UNUserNotificationCenter.current().add(req)
     }
 
+    static func postLongRunning(_ run: WorkflowRun, averageSeconds: Int, elapsedSeconds: Int, sound selectedSound: NotificationSound) {
+        guard isAvailable else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "\(run.workflowName) is running long"
+        content.body = "\(run.repo) has run for \(Formatting.duration(seconds: elapsedSeconds)); average is \(Formatting.duration(seconds: averageSeconds))"
+        content.userInfo = ["url": run.htmlURL.absoluteString]
+        content.sound = sound(for: selectedSound)
+        let req = UNNotificationRequest(
+            identifier: "sprocket.longrun.\(run.id)",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(req)
+    }
+
     @MainActor
     static func handleUsage(alerts: [PlannedNotification], sound selectedSound: NotificationSound) {
         for alert in alerts {
             if case let .usageThreshold(account, threshold, percent) = alert {
                 postUsageThreshold(account: account, threshold: threshold, percentUsed: percent, sound: selectedSound)
+            } else if case let .longRunning(run, average, elapsed) = alert {
+                postLongRunning(run, averageSeconds: average, elapsedSeconds: elapsed, sound: selectedSound)
             }
         }
     }
@@ -121,6 +138,8 @@ enum Notifier {
                 postSummary(failureCount: count, sound: preferences.sound)
             case let .usageThreshold(account, threshold, percent):
                 postUsageThreshold(account: account, threshold: threshold, percentUsed: percent, sound: preferences.sound)
+            case let .longRunning(run, average, elapsed):
+                postLongRunning(run, averageSeconds: average, elapsedSeconds: elapsed, sound: preferences.sound)
             }
         }
     }

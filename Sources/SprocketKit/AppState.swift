@@ -65,6 +65,7 @@ public final class AppState {
     private let fastLaneSeconds: Int = 15
     private var lastActionsUsageRefresh: Date?
     private var lastActionsUsageScopeKey: String?
+    private var longRunAlertsFired: Set<Int64> = []
     #if canImport(Network)
     private let pathMonitor = NWPathMonitor()
     private let pathQueue = DispatchQueue(label: "nz.matt.sprocket.network")
@@ -98,14 +99,74 @@ public final class AppState {
         case .failing: filtered = unmutedRuns(runs).filter { $0.effective.isFailure }
         case .recent:  filtered = unmutedRuns(runs).sorted { $0.startedAt > $1.startedAt }
         }
-        guard !freeTextFilter.isEmpty else { return filtered }
+        guard !freeTextFilter.isEmpty else { return sortedForPinned(filtered) }
         let q = freeTextFilter.lowercased()
-        return filtered.filter {
+        return sortedForPinned(filtered.filter {
             $0.repo.lowercased().contains(q)
             || $0.workflowName.lowercased().contains(q)
             || $0.displayTitle.lowercased().contains(q)
             || $0.branch.lowercased().contains(q)
+        })
+    }
+
+    public func sortedForPinned(_ input: [WorkflowRun]) -> [WorkflowRun] {
+        input.sorted { lhs, rhs in
+            let lhsPinned = settings.isPinned(lhs)
+            let rhsPinned = settings.isPinned(rhs)
+            if lhsPinned != rhsPinned { return lhsPinned && !rhsPinned }
+            return lhs.startedAt > rhs.startedAt
         }
+    }
+
+    public func timingStats(for run: WorkflowRun, sampleSize: Int = 10) -> WorkflowTimingStats {
+        let matching = runs
+            .filter {
+                $0.id != run.id
+                && $0.workflowBranchKey == run.workflowBranchKey
+                && !$0.effective.isLive
+                && $0.durationSeconds > 0
+            }
+            .sorted { $0.startedAt > $1.startedAt }
+        let durations = Array(matching.prefix(sampleSize).map(\.durationSeconds))
+        let trend = Array(matching.prefix(20).reversed().map(\.durationSeconds))
+        return WorkflowTimingStats(completedDurations: durations, trendSeconds: trend)
+    }
+
+    public func workflowTrend(for run: WorkflowRun) -> [Int] {
+        timingStats(for: run).trendSeconds
+    }
+
+    public func estimatedWorkflowCostBreakdown(groupByWorkflow: Bool) -> [WorkflowCostBreakdown] {
+        let calendar = Calendar.current
+        let now = Date()
+        var buckets: [String: (repo: String, workflow: String?, seconds: Int)] = [:]
+        for run in runs where calendar.isDate(run.startedAt, equalTo: now, toGranularity: .month) {
+            let workflow = groupByWorkflow ? run.workflowName : nil
+            let key = workflow.map { "\(run.repo)|\($0)" } ?? run.repo
+            let seconds = max(run.durationSeconds, run.liveElapsedSeconds(now: now))
+            var bucket = buckets[key] ?? (run.repo, workflow, 0)
+            bucket.seconds += seconds
+            buckets[key] = bucket
+        }
+        return buckets.values
+            .map { bucket in
+                let minutes = Int(ceil(Double(bucket.seconds) / 60.0))
+                return WorkflowCostBreakdown(
+                    repo: bucket.repo,
+                    workflowName: bucket.workflow,
+                    minutes: minutes,
+                    estimatedCost: Double(minutes) * 0.008
+                )
+            }
+            .sorted { $0.minutes > $1.minutes }
+    }
+
+    public func projectedEndOfMonthMinutes(now: Date = Date(), calendar: Calendar = .current) -> Int? {
+        guard let usage = actionsUsage else { return nil }
+        let day = max(1, calendar.component(.day, from: now))
+        guard day >= 5 else { return nil }
+        guard let range = calendar.range(of: .day, in: .month, for: now) else { return nil }
+        return Int((Double(usage.totalMinutesUsed) / Double(day) * Double(range.count)).rounded(.up))
     }
 
     public var counts: (all: Int, running: Int, failing: Int) {
@@ -129,6 +190,7 @@ public final class AppState {
         self.lastRefresh = Date()
         self.isAuthed = true
         self.mockMode = true
+        self.longRunAlertsFired = []
     }
 
     /// Called once on launch: pull saved credentials + Client ID, set them on
@@ -346,6 +408,7 @@ public final class AppState {
         actionsUsageAccounts = []
         lastActionsUsageRefresh = nil
         lastActionsUsageScopeKey = nil
+        longRunAlertsFired = []
     }
 
     public func reconfigureOAuthApp() {
@@ -392,6 +455,7 @@ public final class AppState {
         lastFetchError = nil
         lastActionsUsageRefresh = nil
         lastActionsUsageScopeKey = nil
+        longRunAlertsFired = []
         mockMode = false
         _ = await monitor.ingest([])
     }
@@ -418,7 +482,7 @@ public final class AppState {
             stateLog.info("refresh — \(repos.count) repos")
             var allRuns: [WorkflowRun] = []
             for repo in repos.filter({ $0.watching && !$0.muted }).prefix(8) {
-                let runs = (try? await client.listRuns(repo: repo, perPage: 5)) ?? []
+                let runs = (try? await client.listRuns(repo: repo, perPage: 20)) ?? []
                 allRuns.append(contentsOf: runs)
             }
             let sorted = allRuns.sorted { $0.startedAt > $1.startedAt }
@@ -429,10 +493,15 @@ public final class AppState {
             self.lastRefresh = Date()
             stateLog.info("refresh OK — \(allRuns.count) runs, \(events.count) state changes")
             if !events.isEmpty { onStateChanges?(events) }
+            evaluateLongRunAlerts(now: Date())
         } catch {
             lastFetchError = "\(error)"
             stateLog.info("refresh failed — \(error)")
         }
+    }
+
+    public func togglePinned(_ run: WorkflowRun) {
+        settings.togglePinned(run)
     }
 
     private func shouldRefreshActionsUsage(for owners: [ActionsUsageOwner]) -> Bool {
@@ -522,6 +591,29 @@ public final class AppState {
         )
         if tracker != snapshot {
             settings.usageAlertTracker = tracker
+        }
+        if !planned.isEmpty {
+            onUsageAlerts?(planned)
+        }
+    }
+
+    public func evaluateLongRunAlerts(now: Date = Date()) {
+        let prefs = settings.notificationPreferences
+        guard prefs.longRunAlerts, prefs.longRunAlertPercent > 0, !prefs.isInQuietHours(now: now) else { return }
+        longRunAlertsFired.formIntersection(runs.filter { $0.effective.isLive }.map(\.id))
+        var planned: [PlannedNotification] = []
+        for run in runs where run.effective == .running && !longRunAlertsFired.contains(run.id) {
+            let stats = timingStats(for: run)
+            guard let average = stats.averageSeconds, average > 0 else { continue }
+            let elapsed = run.runningSeconds(now: now)
+            let threshold = average + (average * prefs.longRunAlertPercent / 100)
+            guard elapsed >= threshold else { continue }
+            if prefs.myRunsOnly,
+               user?.login.caseInsensitiveCompare(run.actor) != .orderedSame {
+                continue
+            }
+            longRunAlertsFired.insert(run.id)
+            planned.append(.longRunning(run, averageSeconds: average, elapsedSeconds: elapsed))
         }
         if !planned.isEmpty {
             onUsageAlerts?(planned)

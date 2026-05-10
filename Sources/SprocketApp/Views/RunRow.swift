@@ -1,8 +1,9 @@
 import SwiftUI
 import SprocketKit
 
-struct RunRow: View {
+struct RunRow: View, Equatable {
     let run: WorkflowRun
+    let now: Date
     @Environment(AppState.self) private var state
     @Environment(\.openURL) private var openURL
     @State private var hover = false
@@ -10,11 +11,25 @@ struct RunRow: View {
     @State private var jobs: [WorkflowJob] = []
     @State private var jobsLoading = false
     @State private var jobsError: String?
+    @State private var logTails: [Int64: [String]] = [:]
+    @State private var logLoading: Set<Int64> = []
+    @State private var logFetchedAt: [Int64: Date] = [:]
+
+    nonisolated static func == (lhs: RunRow, rhs: RunRow) -> Bool {
+        guard lhs.run == rhs.run else { return false }
+        if lhs.run.effective.isLive {
+            return Int(lhs.now.timeIntervalSince1970) == Int(rhs.now.timeIntervalSince1970)
+        }
+        return true
+    }
 
     var body: some View {
         let density = state.density
         let isLive = run.effective.isLive
         let titleSize: CGFloat = density == .compact ? 11.5 : 12.5
+        let stats = (isLive || expanded)
+            ? state.timingStats(for: run)
+            : WorkflowTimingStats(completedDurations: [], trendSeconds: [])
 
         VStack(spacing: 0) {
             HStack(alignment: density == .compact ? .center : .top, spacing: 10) {
@@ -47,10 +62,16 @@ struct RunRow: View {
                     HStack(spacing: 5) {
                         Chip(systemImage: "arrow.triangle.branch", text: run.branch)
                         Chip(systemImage: eventIcon, text: run.event)
-                        Text(durationLabel)
+                        Text(durationLabel(now: now, stats: stats))
                             .font(.system(size: 10.5))
                             .foregroundStyle(.tertiary)
                             .monospacedDigit()
+                        if let eta = etaLabel(now: now, stats: stats) {
+                            Text("· \(eta)")
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(Color.sprocketAccent)
+                                .monospacedDigit()
+                        }
                         Text("· \(Formatting.relative(run.startedAt))")
                             .font(.system(size: 10.5))
                             .foregroundStyle(.quaternary)
@@ -62,7 +83,7 @@ struct RunRow: View {
                             .font(.system(size: 10, design: .monospaced))
                             .foregroundStyle(.tertiary)
                         Text("·").foregroundStyle(.quaternary).font(.system(size: 10))
-                        Text(durationLabel)
+                        Text(durationLabel(now: now, stats: stats))
                             .font(.system(size: 10))
                             .foregroundStyle(.tertiary)
                             .monospacedDigit()
@@ -76,11 +97,14 @@ struct RunRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Avatar(login: run.actor,
-                   imageURL: run.actorAvatarURL,
-                   hue: Double(run.actorHue),
-                   size: density == .compact ? 14 : 16)
-                .padding(.top, density == .compact ? 0 : 3)
+            VStack(alignment: .trailing, spacing: 5) {
+                Avatar(login: run.actor,
+                       imageURL: run.actorAvatarURL,
+                       hue: Double(run.actorHue),
+                       size: density == .compact ? 14 : 16)
+                RowActions(run: run)
+            }
+            .padding(.top, density == .compact ? 0 : 3)
         }
             .padding(.horizontal, 14)
             .padding(.vertical, density == .compact ? 5 : (density == .spacious ? 12 : 8))
@@ -99,6 +123,11 @@ struct RunRow: View {
                     jobs: jobs,
                     isLoading: jobsLoading,
                     error: jobsError,
+                    stats: stats,
+                    now: now,
+                    logTails: logTails,
+                    logLoading: logLoading,
+                    loadLog: { job in Task { await loadLogTail(job) } },
                     retry: { Task { await loadJobs(force: true) } }
                 )
                 .transition(.opacity)
@@ -160,11 +189,57 @@ struct RunRow: View {
         }
     }
 
-    private var durationLabel: String {
-        if run.effective.isLive {
-            return "running · \(Formatting.duration(seconds: run.durationSeconds))"
+    private func loadLogTail(_ job: WorkflowJob) async {
+        guard !logLoading.contains(job.id) else { return }
+        if let fetchedAt = logFetchedAt[job.id],
+           Date().timeIntervalSince(fetchedAt) < 10 {
+            return
+        }
+        logLoading.insert(job.id)
+        defer { logLoading.remove(job.id) }
+        do {
+            if state.mockMode {
+                logTails[job.id] = [
+                    "Run swift test --parallel",
+                    "Test Suite 'SprocketKitTests' started",
+                    "Executing current step for \(job.name)…",
+                ]
+            } else {
+                logTails[job.id] = try await state.client.fetchJobLogTail(repo: run.repo, jobID: job.id)
+            }
+            logFetchedAt[job.id] = Date()
+        } catch {
+            let message = "\(error)"
+            if message.contains("404") || message.contains("410") {
+                logTails[job.id] = ["Logs not available yet — GitHub uploads them in chunks while the job runs."]
+            } else {
+                logTails[job.id] = ["Unable to fetch log tail: \(error)"]
+            }
+        }
+    }
+
+    private func durationLabel(now: Date, stats: WorkflowTimingStats) -> String {
+        if run.effective == .queued {
+            return "queued \(Formatting.duration(seconds: run.queuedSeconds(now: now)))"
+        }
+        if run.effective == .running {
+            let queued = run.queuedSeconds(now: now)
+            let running = run.runningSeconds(now: now)
+            if queued > 0 {
+                return "queued \(Formatting.duration(seconds: queued)) · running \(Formatting.duration(seconds: running))"
+            }
+            return "running \(Formatting.duration(seconds: running))"
         }
         return Formatting.duration(seconds: run.durationSeconds)
+    }
+
+    private func etaLabel(now: Date, stats: WorkflowTimingStats) -> String? {
+        guard run.effective == .running,
+              let p50 = stats.p50Seconds,
+              let average = stats.averageSeconds else { return nil }
+        let elapsed = run.runningSeconds(now: now)
+        guard elapsed >= p50, average > elapsed else { return nil }
+        return "≈ \(Formatting.durationShort(seconds: average - elapsed)) left"
     }
 
     private var eventIcon: String {
@@ -178,11 +253,65 @@ struct RunRow: View {
     }
 }
 
+private struct RowActions: View {
+    let run: WorkflowRun
+    @Environment(AppState.self) private var state
+    @State private var confirmingCancel = false
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Button {
+                state.togglePinned(run)
+            } label: {
+                Image(systemName: state.settings.isPinned(run) ? "star.fill" : "star")
+            }
+            .help(state.settings.isPinned(run) ? "Unpin workflow" : "Pin workflow")
+
+            if run.effective.isLive {
+                Button(role: .destructive) {
+                    confirmingCancel = true
+                } label: {
+                    Image(systemName: "stop.circle")
+                }
+                .help("Cancel run")
+            } else if run.effective.isFailure {
+                Button {
+                    Task { await state.rerunFailedJobs(run) }
+                } label: {
+                    Image(systemName: "arrow.clockwise.circle")
+                }
+                .help("Re-run failed jobs")
+            }
+        }
+        .buttonStyle(.borderless)
+        .controlSize(.mini)
+        .font(.system(size: 10.5))
+        .foregroundStyle(.secondary)
+        .confirmationDialog(
+            "Cancel this workflow run?",
+            isPresented: $confirmingCancel,
+            titleVisibility: .visible
+        ) {
+            Button("Cancel run", role: .destructive) {
+                Task { await state.cancelRun(run) }
+            }
+            Button("Keep running", role: .cancel) {}
+        } message: {
+            Text("\(run.repo) · \(run.workflowName)")
+        }
+    }
+}
+
 private struct JobsDisclosure: View {
     let run: WorkflowRun
     let jobs: [WorkflowJob]
     let isLoading: Bool
     let error: String?
+    let stats: WorkflowTimingStats
+    let now: Date
+    let logTails: [Int64: [String]]
+    let logLoading: Set<Int64>
+    let loadLog: (WorkflowJob) -> Void
     let retry: () -> Void
 
     @Environment(AppState.self) private var state
@@ -226,8 +355,15 @@ private struct JobsDisclosure: View {
                     .padding(.vertical, 10)
                     .padding(.horizontal, 38)
             } else {
+                WorkflowMetrics(stats: stats)
                 ForEach(jobs) { job in
-                    JobRow(job: job)
+                    JobRow(
+                        job: job,
+                        now: now,
+                        tail: logTails[job.id],
+                        isLoadingLog: logLoading.contains(job.id),
+                        loadLog: { loadLog(job) }
+                    )
                         .contentShape(Rectangle())
                         .onTapGesture {
                             if let url = job.htmlURL { openURL(url) }
@@ -239,8 +375,67 @@ private struct JobsDisclosure: View {
     }
 }
 
+private struct WorkflowMetrics: View {
+    let stats: WorkflowTimingStats
+
+    var body: some View {
+        if !stats.trendSeconds.isEmpty {
+            HStack(spacing: 8) {
+                Text("last 20")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                Sparkline(values: stats.trendSeconds)
+                    .frame(width: 72, height: 18)
+                if let avg = stats.averageSeconds {
+                    Text("avg \(Formatting.durationShort(seconds: avg))")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 38)
+            .padding(.vertical, 5)
+        }
+    }
+}
+
+private struct Sparkline: View {
+    let values: [Int]
+
+    var body: some View {
+        GeometryReader { proxy in
+            Path { path in
+                guard values.count > 1, let minValue = values.min(), let maxValue = values.max() else { return }
+                let width = proxy.size.width
+                let height = proxy.size.height
+                if minValue == maxValue {
+                    path.move(to: CGPoint(x: 0, y: height / 2))
+                    path.addLine(to: CGPoint(x: width, y: height / 2))
+                    return
+                }
+                let range = CGFloat(maxValue - minValue)
+                for index in values.indices {
+                    let x = width * CGFloat(index) / CGFloat(values.count - 1)
+                    let y = height - (height * CGFloat(values[index] - minValue) / range)
+                    if index == values.startIndex {
+                        path.move(to: CGPoint(x: x, y: y))
+                    } else {
+                        path.addLine(to: CGPoint(x: x, y: y))
+                    }
+                }
+            }
+            .stroke(Color.sprocketAccent, style: StrokeStyle(lineWidth: 1.4, lineCap: .round, lineJoin: .round))
+        }
+        .accessibilityLabel("Workflow duration trend")
+    }
+}
+
 private struct JobRow: View {
     let job: WorkflowJob
+    let now: Date
+    let tail: [String]?
+    let isLoadingLog: Bool
+    let loadLog: () -> Void
     @State private var hover = false
 
     var body: some View {
@@ -269,6 +464,46 @@ private struct JobRow: View {
                         .lineLimit(1)
                 }
             }
+            let slowest = job.slowestSteps(now: now)
+            if !slowest.isEmpty {
+                HStack(spacing: 6) {
+                    Spacer().frame(width: 14)
+                    Image(systemName: "timer")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                    Text(slowest.map { "\($0.0.name) \(Formatting.durationShort(seconds: $0.1))" }.joined(separator: " · "))
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+            }
+            if job.effective.isLive {
+                HStack(spacing: 6) {
+                    Spacer().frame(width: 14)
+                    Button {
+                        loadLog()
+                    } label: {
+                        Label(isLoadingLog ? "Loading log…" : "Tail log", systemImage: "text.alignleft")
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.mini)
+                    .disabled(isLoadingLog)
+                    Spacer(minLength: 0)
+                }
+                if let tail, !tail.isEmpty {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(Array(tail.enumerated()), id: \.offset) { _, line in
+                            Text(line)
+                                .font(.system(size: 9.5, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.head)
+                        }
+                    }
+                    .padding(.leading, 20)
+                    .padding(.top, 2)
+                }
+            }
         }
         .padding(.vertical, 5)
         .padding(.leading, 24)
@@ -279,7 +514,7 @@ private struct JobRow: View {
 
     private var durationLabel: String {
         if job.effective.isLive {
-            return "running · \(Formatting.duration(seconds: job.durationSeconds))"
+            return "running · \(Formatting.duration(seconds: job.runningSeconds(now: now)))"
         }
         return Formatting.duration(seconds: job.durationSeconds)
     }
