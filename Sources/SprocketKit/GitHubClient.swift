@@ -161,9 +161,10 @@ public actor GitHubClient {
         }
     }
 
-    /// `/repos/{owner}/{repo}/actions/runs?per_page=N`. Decodes recent workflow runs.
-    public func listRuns(repo: Repository, perPage: Int = 5) async throws -> [WorkflowRun] {
-        let req = makeRequest(path: "/repos/\(repo.fullName)/actions/runs?per_page=\(perPage)")
+    /// `/repos/{owner}/{repo}/actions/runs?per_page=N&page=P`. Decodes a page of workflow runs.
+    public func listRuns(repo: Repository, perPage: Int = 5, page: Int = 1) async throws -> [WorkflowRun] {
+        let pageClamped = max(1, page)
+        let req = makeRequest(path: "/repos/\(repo.fullName)/actions/runs?per_page=\(perPage)&page=\(pageClamped)")
         let data = try await fetch(req)
         struct Envelope: Decodable { let workflow_runs: [Raw] }
         struct Raw: Decodable {

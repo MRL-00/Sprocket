@@ -3,6 +3,12 @@ import Foundation
 import Observation
 #endif
 
+extension Comparable {
+    fileprivate func clamped(to range: ClosedRange<Self>) -> Self {
+        min(max(self, range.lowerBound), range.upperBound)
+    }
+}
+
 public enum NotificationSound: String, Sendable, Codable, CaseIterable, Hashable {
     case `default`
     case none
@@ -137,6 +143,7 @@ public final class AppSettings {
         public static let updatesAutoInstall = "updates.autoInstall"
         public static let usageAlertTracker = "settings.notifications.usageAlertTracker"
         public static let pinnedWorkflows = "settings.workflows.pinned"
+        public static let maxReposToScan = "settings.runs.maxReposToScan"
 
         public static let allKeys: [String] = [
             pollingCadenceSeconds,
@@ -153,9 +160,13 @@ public final class AppSettings {
             updatesAutoInstall,
             usageAlertTracker,
             pinnedWorkflows,
+            maxReposToScan,
             AuthStore.clientIDDefaultsKey,
         ]
     }
+
+    public static let maxReposToScanRange: ClosedRange<Int> = 1...50
+    public static let defaultMaxReposToScan = 12
 
     @ObservationIgnored private let defaults: UserDefaults
 
@@ -195,6 +206,16 @@ public final class AppSettings {
     public var userAgent: String {
         didSet { defaults.set(userAgent, forKey: Defaults.userAgent) }
     }
+    public var maxReposToScan: Int {
+        didSet {
+            let clamped = maxReposToScan.clamped(to: Self.maxReposToScanRange)
+            if clamped != maxReposToScan {
+                maxReposToScan = clamped
+                return
+            }
+            defaults.set(maxReposToScan, forKey: Defaults.maxReposToScan)
+        }
+    }
 
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -213,6 +234,11 @@ public final class AppSettings {
         self.pinnedWorkflows = Self.decode(Set<WorkflowKey>.self, from: defaults, key: Defaults.pinnedWorkflows) ?? []
         self.gitHubAPIBaseURL = defaults.string(forKey: Defaults.gitHubAPIBaseURL) ?? GitHubClientConfig.defaultBaseURL.absoluteString
         self.userAgent = defaults.string(forKey: Defaults.userAgent) ?? GitHubClientConfig.defaultUserAgent
+        self.maxReposToScan = {
+            let value = defaults.integer(forKey: Defaults.maxReposToScan)
+            let resolved = value > 0 ? value : Self.defaultMaxReposToScan
+            return resolved.clamped(to: Self.maxReposToScanRange)
+        }()
     }
 
     public var resolvedGitHubAPIBaseURL: URL {
