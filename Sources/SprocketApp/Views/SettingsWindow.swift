@@ -60,6 +60,15 @@ private struct GeneralTab: View {
                 Toggle("Battery saver", isOn: $settings.batterySaver)
                 Toggle("Pause on no network", isOn: $settings.pauseOnNoNetwork)
             }
+            Section("Workflow runs") {
+                Stepper(
+                    "Repositories to scan: \(settings.maxReposToScan)",
+                    value: $settings.maxReposToScan,
+                    in: AppSettings.maxReposToScanRange
+                )
+                Text("Scrolling to the bottom of the list loads older runs from these repositories on demand.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section("Density") {
                 Picker("Row density", selection: $state.density) {
                     Text("Compact").tag(Density.compact)

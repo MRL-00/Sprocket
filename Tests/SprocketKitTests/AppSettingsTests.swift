@@ -104,6 +104,24 @@ struct AppSettingsTests {
         #expect(preference.watchedBranches == ["main", "release/*"])
     }
 
+    @Test("repo scan limit persists and clamps to allowed range")
+    func repoScanLimitPersists() throws {
+        let defaults = try isolatedDefaults()
+        let settings = AppSettings(defaults: defaults)
+
+        #expect(settings.maxReposToScan == AppSettings.defaultMaxReposToScan)
+
+        settings.maxReposToScan = 25
+        let reloaded = AppSettings(defaults: defaults)
+        #expect(reloaded.maxReposToScan == 25)
+
+        reloaded.maxReposToScan = 9999
+        #expect(reloaded.maxReposToScan == AppSettings.maxReposToScanRange.upperBound)
+
+        reloaded.maxReposToScan = 0
+        #expect(reloaded.maxReposToScan == AppSettings.maxReposToScanRange.lowerBound)
+    }
+
     @Test("GitHub Enterprise API URLs produce matching web registration URLs")
     func enterpriseRegistrationURL() throws {
         let defaults = try isolatedDefaults()

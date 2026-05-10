@@ -48,6 +48,24 @@ public final class AppState {
     public var signInError: String?
     public var lastFetchError: String?
     public var isRefreshing: Bool = false
+    public var isLoadingMore: Bool = false
+    /// Repos that may still have older runs to fetch. When empty, the list is exhausted.
+    public private(set) var reposWithMoreHistory: Set<String> = []
+    /// Highest page index we've successfully fetched across repos. Refresh resets to 1.
+    private var historyPage: Int = 1
+    /// How many merged runs are currently revealed to the UI. Starts at `displayChunk`,
+    /// grows in `displayChunk` increments via `loadMoreRuns`.
+    public private(set) var displayLimit: Int = AppState.displayChunk
+    /// How many runs we reveal per "load more" tick.
+    public static let displayChunk: Int = 25
+    /// How many runs we fetch from each repo per API call. Small to keep the initial
+    /// refresh cheap; we make up the difference by paging through repos lazily as the
+    /// user scrolls.
+    public static let apiPerRepoPage: Int = 5
+    public var hasMoreHistory: Bool {
+        // Either we have buffered runs we haven't shown yet, or some repo can still page.
+        runs.count > displayLimit || !reposWithMoreHistory.isEmpty
+    }
 
     public let client = GitHubClient()
     public let auth = AuthStore()
@@ -107,6 +125,13 @@ public final class AppState {
             || $0.displayTitle.lowercased().contains(q)
             || $0.branch.lowercased().contains(q)
         })
+    }
+
+    /// `visibleRuns` truncated to `displayLimit`. The popover list uses this so
+    /// the user only sees the most recent N items and can grow the window by
+    /// scrolling to the bottom.
+    public var displayedRuns: [WorkflowRun] {
+        Array(visibleRuns.prefix(displayLimit))
     }
 
     public func sortedForPinned(_ input: [WorkflowRun]) -> [WorkflowRun] {
@@ -457,6 +482,10 @@ public final class AppState {
         lastActionsUsageScopeKey = nil
         longRunAlertsFired = []
         mockMode = false
+        historyPage = 1
+        reposWithMoreHistory = []
+        isLoadingMore = false
+        displayLimit = Self.displayChunk
         _ = await monitor.ingest([])
     }
 
@@ -477,14 +506,29 @@ public final class AppState {
             let me = try await client.currentUser()
             user = me
             stateLog.info("refresh — user=\(me.login)")
-            let repos = try await client.listRepos(perPage: 12).map { settings.applyPreferences(to: $0) }
+            let repoCap = settings.maxReposToScan
+            let perPage = Self.apiPerRepoPage
+            let repos = try await client.listRepos(perPage: repoCap).map { settings.applyPreferences(to: $0) }
             repositories = repos
             stateLog.info("refresh — \(repos.count) repos")
+            let candidates = Array(repos.filter({ $0.watching && !$0.muted }).prefix(repoCap))
             var allRuns: [WorkflowRun] = []
-            for repo in repos.filter({ $0.watching && !$0.muted }).prefix(8) {
-                let runs = (try? await client.listRuns(repo: repo, perPage: 20)) ?? []
-                allRuns.append(contentsOf: runs)
+            var reposWithMore: Set<String> = []
+            await withTaskGroup(of: (String, [WorkflowRun]).self) { group in
+                for repo in candidates {
+                    group.addTask { [client] in
+                        let runs = (try? await client.listRuns(repo: repo, perPage: perPage, page: 1)) ?? []
+                        return (repo.fullName, runs)
+                    }
+                }
+                for await (fullName, runs) in group {
+                    allRuns.append(contentsOf: runs)
+                    if runs.count >= perPage { reposWithMore.insert(fullName) }
+                }
             }
+            historyPage = 1
+            reposWithMoreHistory = reposWithMore
+            displayLimit = Self.displayChunk
             let sorted = allRuns.sorted { $0.startedAt > $1.startedAt }
             let events = await monitor.ingest(sorted)
             self.runs = sorted
@@ -498,6 +542,61 @@ public final class AppState {
             lastFetchError = "\(error)"
             stateLog.info("refresh failed — \(error)")
         }
+    }
+
+    /// Reveal the next chunk of older runs to the UI. First grows `displayLimit`
+    /// from the buffered runs we already have; only fetches the next page from
+    /// the GitHub API if the buffer is exhausted. Idempotent if already loading
+    /// or if there's nothing more to show.
+    public func loadMoreRuns() async {
+        guard isAuthed, !mockMode else { return }
+        guard !isLoadingMore, hasMoreHistory else { return }
+
+        let nextLimit = displayLimit + Self.displayChunk
+
+        // First try to grow purely from the buffer we already have.
+        if visibleRuns.count >= nextLimit || reposWithMoreHistory.isEmpty {
+            displayLimit = nextLimit
+            stateLog.info("loadMore — revealed from buffer, displayLimit=\(self.displayLimit)")
+            return
+        }
+
+        isLoadingMore = true
+        defer { isLoadingMore = false }
+
+        let perPage = Self.apiPerRepoPage
+        let nextPage = historyPage + 1
+        let candidateNames = reposWithMoreHistory
+        let candidates = repositories.filter {
+            $0.watching && !$0.muted && candidateNames.contains($0.fullName)
+        }
+        stateLog.info("loadMore — fetching page \(nextPage) from \(candidates.count) repos")
+
+        var newRuns: [WorkflowRun] = []
+        var stillMore: Set<String> = []
+        await withTaskGroup(of: (String, [WorkflowRun]).self) { group in
+            for repo in candidates {
+                group.addTask { [client] in
+                    let page = (try? await client.listRuns(repo: repo, perPage: perPage, page: nextPage)) ?? []
+                    return (repo.fullName, page)
+                }
+            }
+            for await (fullName, page) in group {
+                newRuns.append(contentsOf: page)
+                if page.count >= perPage { stillMore.insert(fullName) }
+            }
+        }
+
+        if !newRuns.isEmpty {
+            var byID: [Int64: WorkflowRun] = Dictionary(uniqueKeysWithValues: runs.map { ($0.id, $0) })
+            for run in newRuns { byID[run.id] = run }
+            runs = byID.values.sorted { $0.startedAt > $1.startedAt }
+        }
+        historyPage = nextPage
+        reposWithMoreHistory = stillMore
+        displayLimit = nextLimit
+        rateLimit = await client.rateLimit
+        stateLog.info("loadMore OK — page \(nextPage), +\(newRuns.count) runs, displayLimit=\(self.displayLimit), \(stillMore.count) repos still have history")
     }
 
     public func togglePinned(_ run: WorkflowRun) {

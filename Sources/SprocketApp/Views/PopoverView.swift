@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import SprocketKit
 
 struct PopoverView: View {
@@ -324,7 +325,7 @@ private struct OrgSwitcherRow: View {
             .fixedSize()
 
             Spacer(minLength: 0)
-            Text("\(state.visibleRuns.count) runs")
+            Text(runCountLabel)
                 .font(.system(size: 10, design: .monospaced))
                 .foregroundStyle(.tertiary)
                 .monospacedDigit()
@@ -343,10 +344,21 @@ private struct OrgSwitcherRow: View {
         )
         .sorted()
     }
+
+    private var runCountLabel: String {
+        let shown = state.displayedRuns.count
+        let total = state.visibleRuns.count
+        if total > shown {
+            return "\(shown) of \(total)+"
+        }
+        return state.hasMoreHistory ? "\(shown)+ runs" : "\(shown) runs"
+    }
 }
 
 private struct RunListView: View {
     @Environment(AppState.self) private var state
+    @State private var now = Date()
+    private let liveTicker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
         Group {
@@ -357,33 +369,81 @@ private struct RunListView: View {
             } else if filtered.isEmpty {
                 EmptyPlaceholder()
             } else {
-                TimelineView(.periodic(from: .now, by: 1)) { timeline in
-                    ScrollView(.vertical) {
-                        LazyVStack(spacing: 0) {
-                            ForEach(filtered) { run in
-                                RunRow(run: run, now: timeline.date)
-                                    .equatable()
-                                Divider().opacity(0.4)
-                            }
+                ScrollView(.vertical) {
+                    LazyVStack(spacing: 0) {
+                        ForEach(Array(filtered.enumerated()), id: \.element.id) { index, run in
+                            RunRow(run: run, now: now)
+                                .equatable()
+                                .onAppear {
+                                    // Prefetch when user scrolls within 5 of the end.
+                                    if index >= filtered.count - 5 {
+                                        Task { await state.loadMoreRuns() }
+                                    }
+                                }
+                            Divider().opacity(0.4)
                         }
-                    }
-                    .onChange(of: Int(timeline.date.timeIntervalSince1970) / 10) { _, _ in
-                        state.evaluateLongRunAlerts(now: timeline.date)
+                        LoadMoreFooter()
                     }
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onReceive(liveTicker) { date in
+            now = date
+            if Int(date.timeIntervalSince1970) % 10 == 0 {
+                state.evaluateLongRunAlerts(now: date)
+            }
+        }
     }
 
     private var filtered: [WorkflowRun] {
         let scoped: [WorkflowRun]
         if state.orgScope == "All organizations" || state.orgScope == "All accounts" {
-            scoped = state.visibleRuns
+            scoped = state.displayedRuns
         } else {
-            scoped = state.visibleRuns.filter { $0.repo.hasPrefix(state.orgScope + "/") }
+            scoped = state.displayedRuns.filter { $0.repo.hasPrefix(state.orgScope + "/") }
         }
         return scoped
+    }
+}
+
+private struct LoadMoreFooter: View {
+    @Environment(AppState.self) private var state
+
+    var body: some View {
+        Group {
+            if state.isLoadingMore {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Loading older runs…")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+            } else if state.hasMoreHistory {
+                Button {
+                    Task { await state.loadMoreRuns() }
+                } label: {
+                    Text("Load older runs")
+                        .font(.system(size: 11, weight: .medium))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(Color.sprocketAccent)
+                .onAppear {
+                    // Auto-load when the user scrolls the sentinel into view.
+                    Task { await state.loadMoreRuns() }
+                }
+            } else if !state.runs.isEmpty {
+                Text("End of history")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+            }
+        }
     }
 }
 
