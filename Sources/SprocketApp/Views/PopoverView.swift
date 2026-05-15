@@ -15,6 +15,10 @@ struct PopoverView: View {
             FilterRow()
             Divider().opacity(0.6)
             OrgSwitcherRow()
+            if !state.repositoryRefreshFailures.isEmpty {
+                Divider().opacity(0.6)
+                RefreshWarningRow()
+            }
             Divider().opacity(0.6)
             if !state.isAuthed && !state.mockMode {
                 SignedOutPlaceholder {
@@ -302,6 +306,7 @@ private struct OrgSwitcherRow: View {
                 .foregroundStyle(.secondary)
             Menu {
                 Button("All accounts") { state.orgScope = "All accounts" }
+                Button("All organizations") { state.orgScope = "All organizations" }
                 Divider()
                 if let login = state.user?.login {
                     Button("\(login) · Personal") { state.orgScope = login }
@@ -346,12 +351,70 @@ private struct OrgSwitcherRow: View {
     }
 
     private var runCountLabel: String {
-        let shown = state.displayedRuns.count
-        let total = state.visibleRuns.count
+        let shown = scoped(state.displayedRuns).count
+        let total = scoped(state.visibleRuns).count
         if total > shown {
             return "\(shown) of \(total)+"
         }
         return state.hasMoreHistory ? "\(shown)+ runs" : "\(shown) runs"
+    }
+
+    private func scoped(_ runs: [WorkflowRun]) -> [WorkflowRun] {
+        switch state.orgScope {
+        case "All accounts":
+            return runs
+        case "All organizations":
+            let orgPrefixes = Set(orgs.map { $0 + "/" })
+            return runs.filter { run in orgPrefixes.contains(where: { run.repo.hasPrefix($0) }) }
+        case "Personal":
+            guard let login = state.user?.login else { return runs }
+            return runs.filter { $0.repo.hasPrefix(login + "/") }
+        default:
+            return runs.filter { $0.repo.hasPrefix(state.orgScope + "/") }
+        }
+    }
+}
+
+private struct RefreshWarningRow: View {
+    @Environment(AppState.self) private var state
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 10))
+                .foregroundStyle(Color.sprocketWarning)
+            Text(warningText)
+                .font(.system(size: 10.5))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+            Menu {
+                ForEach(state.repositoryRefreshFailures) { failure in
+                    Text("\(failure.repository): \(failure.message)")
+                }
+            } label: {
+                Text("Details")
+                    .font(.system(size: 10.5, weight: .medium))
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            Button {
+                Task { await state.refresh() }
+            } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 10))
+            }
+            .buttonStyle(.borderless)
+            .help("Retry refresh")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(Color.sprocketWarning.opacity(0.08))
+    }
+
+    private var warningText: String {
+        let count = state.repositoryRefreshFailures.count
+        return count == 1 ? "1 repo failed to refresh" : "\(count) repos failed to refresh"
     }
 }
 
@@ -397,13 +460,23 @@ private struct RunListView: View {
     }
 
     private var filtered: [WorkflowRun] {
-        let scoped: [WorkflowRun]
-        if state.orgScope == "All organizations" || state.orgScope == "All accounts" {
-            scoped = state.displayedRuns
-        } else {
-            scoped = state.displayedRuns.filter { $0.repo.hasPrefix(state.orgScope + "/") }
+        switch state.orgScope {
+        case "All accounts":
+            return state.displayedRuns
+        case "All organizations":
+            let prefixes = Set(
+                state.repositories
+                    .map(\.org)
+                    .filter { $0 != "Personal" && $0 != state.user?.login }
+                    .map { $0 + "/" }
+            )
+            return state.displayedRuns.filter { run in prefixes.contains(where: { run.repo.hasPrefix($0) }) }
+        case "Personal":
+            guard let login = state.user?.login else { return state.displayedRuns }
+            return state.displayedRuns.filter { $0.repo.hasPrefix(login + "/") }
+        default:
+            return state.displayedRuns.filter { $0.repo.hasPrefix(state.orgScope + "/") }
         }
-        return scoped
     }
 }
 
@@ -530,6 +603,18 @@ private struct FooterRow: View {
                 } else {
                     Text("Projected EOM: available after day 5")
                 }
+                if let usage = state.actionsUsage {
+                    Section("Reported runner cost estimate") {
+                        if usage.runnerCostBreakdown.isEmpty {
+                            Text("No runner breakdown available")
+                        } else {
+                            ForEach(usage.runnerCostBreakdown) { item in
+                                Text("\(item.runner) · \(Formatting.compactNumber(item.minutes))m · \(costLabel(item.estimatedCost))")
+                            }
+                            Text("Total · \(costLabel(usage.estimatedHostedRunnerCost))")
+                        }
+                    }
+                }
                 Section("By repository · Linux-equivalent estimate") {
                     if repoBreakdown.isEmpty {
                         Text("No current-month runs in view")
@@ -599,7 +684,9 @@ private struct FooterRow: View {
 
     private var scopedAccounts: [ActionsUsageAccount] {
         if state.orgScope == "All accounts" || state.orgScope == "All organizations" {
-            return state.actionsUsageAccounts
+            return state.orgScope == "All organizations"
+                ? state.actionsUsageAccounts.filter(\.isOrg)
+                : state.actionsUsageAccounts
         }
         if state.orgScope == "Personal" || state.orgScope == state.user?.login {
             return state.actionsUsageAccounts.filter { !$0.isOrg }

@@ -11,6 +11,7 @@ public extension Color {
     static let sprocketSuccess = Color(.sRGB, red: 0.318, green: 0.741, blue: 0.388, opacity: 1.0)
     /// oklch(0.78 0.16 80)  — semantic amber
     static let sprocketRunning = Color(.sRGB, red: 0.910, green: 0.682, blue: 0.165, opacity: 1.0)
+    static let sprocketWarning = sprocketRunning
     /// oklch(0.62 0.18 25)  — semantic red
     static let sprocketFailure = Color(.sRGB, red: 0.851, green: 0.290, blue: 0.220, opacity: 1.0)
     /// oklch(0.65 0.02 250) — neutral grey for cancelled / skipped

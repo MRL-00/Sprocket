@@ -67,6 +67,19 @@ struct ActionsUsageTests {
         #expect(ActionsUsage.aggregate([]) == nil)
     }
 
+    @Test("estimates hosted-runner cost from runner breakdown")
+    func estimatesHostedRunnerCost() {
+        let usage = ActionsUsage(
+            totalMinutesUsed: 130,
+            includedMinutes: 2_000,
+            paidMinutesUsed: 0,
+            breakdown: ["UBUNTU": 10, "WINDOWS": 10, "MACOS": 10]
+        )
+
+        #expect(abs(usage.estimatedHostedRunnerCost - 1.04) < 0.0001)
+        #expect(usage.runnerCostBreakdown.map(\.runner) == ["macOS", "Windows", "Linux"])
+    }
+
     @Test("billing access denial returns nil")
     func billingAccessDeniedReturnsNil() async throws {
         let config = URLSessionConfiguration.ephemeral
@@ -222,6 +235,51 @@ struct ActionsUsageTests {
         #expect(requestCount == 2)
         #expect(first.map(\.id) == [42])
         #expect(second.map(\.id) == [42])
+    }
+
+    @Test("repository listing supports pagination")
+    func repositoryListingSupportsPagination() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [StubURLProtocol.self]
+        let session = URLSession(configuration: config)
+        StubURLProtocol.handler = { request in
+            #expect(request.url?.path == "/user/repos")
+            let components = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
+            let query = Dictionary(uniqueKeysWithValues: (components?.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+            #expect(query["per_page"] == "100")
+            #expect(query["page"] == "3")
+            #expect(query["affiliation"] == "owner,collaborator,organization_member")
+            let response = HTTPURLResponse(
+                url: request.url!,
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: [
+                    "X-RateLimit-Remaining": "4999",
+                    "X-RateLimit-Limit": "5000",
+                    "X-RateLimit-Reset": "1770000000",
+                ]
+            )!
+            let body = """
+            [
+              {
+                "id": 1,
+                "full_name": "acme/app",
+                "archived": false,
+                "fork": false,
+                "owner": { "login": "acme" }
+              }
+            ]
+            """
+            return (Data(body.utf8), response)
+        }
+
+        let client = GitHubClient(
+            config: GitHubClientConfig(baseURL: URL(string: "https://api.example.test")!),
+            session: session
+        )
+
+        let repos = try await client.listRepos(perPage: 500, page: 3)
+        #expect(repos.map(\.fullName) == ["acme/app"])
     }
 
     private static func workflowRunsBody(id: Int) -> String {

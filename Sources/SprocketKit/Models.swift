@@ -224,6 +224,24 @@ public struct WorkflowCostBreakdown: Sendable, Identifiable, Hashable {
     }
 }
 
+public struct RunnerCostBreakdown: Sendable, Identifiable, Hashable {
+    public let runner: String
+    public let minutes: Int
+    public let ratePerMinute: Double
+
+    public init(runner: String, minutes: Int, ratePerMinute: Double) {
+        self.runner = runner
+        self.minutes = minutes
+        self.ratePerMinute = ratePerMinute
+    }
+
+    public var id: String { runner }
+
+    public var estimatedCost: Double {
+        Double(minutes) * ratePerMinute
+    }
+}
+
 public struct WorkflowStep: Sendable, Hashable, Codable, Identifiable {
     public let number: Int
     public let name: String
@@ -369,6 +387,18 @@ public struct Repository: Sendable, Identifiable, Hashable, Codable {
     }
 }
 
+public struct RepositoryRefreshFailure: Sendable, Identifiable, Hashable {
+    public let repository: String
+    public let message: String
+
+    public init(repository: String, message: String) {
+        self.repository = repository
+        self.message = message
+    }
+
+    public var id: String { repository }
+}
+
 public struct GitHubUser: Sendable, Hashable, Codable {
     public let login: String
     public let name: String?
@@ -422,6 +452,22 @@ public struct ActionsUsage: Sendable, Hashable, Codable {
         totalMinutesUsed > includedMinutes
     }
 
+    public var estimatedHostedRunnerCost: Double {
+        runnerCostBreakdown.reduce(0) { $0 + $1.estimatedCost }
+    }
+
+    public var runnerCostBreakdown: [RunnerCostBreakdown] {
+        breakdown
+            .map { runner, minutes in
+                RunnerCostBreakdown(
+                    runner: Self.normalizedRunnerName(runner),
+                    minutes: minutes,
+                    ratePerMinute: Self.hostedRunnerRatePerMinute(for: runner)
+                )
+            }
+            .sorted { $0.estimatedCost > $1.estimatedCost }
+    }
+
     public static func aggregate(_ usages: [ActionsUsage]) -> ActionsUsage? {
         guard !usages.isEmpty else { return nil }
         var breakdown: [String: Int] = [:]
@@ -443,6 +489,23 @@ public struct ActionsUsage: Sendable, Hashable, Codable {
         case includedMinutes = "included_minutes"
         case paidMinutesUsed = "total_paid_minutes_used"
         case breakdown = "minutes_used_breakdown"
+    }
+
+    private static func normalizedRunnerName(_ key: String) -> String {
+        switch key.uppercased() {
+        case "MACOS": return "macOS"
+        case "WINDOWS": return "Windows"
+        case "UBUNTU", "LINUX": return "Linux"
+        default: return key
+        }
+    }
+
+    private static func hostedRunnerRatePerMinute(for key: String) -> Double {
+        switch key.uppercased() {
+        case "MACOS": return 0.08
+        case "WINDOWS": return 0.016
+        default: return 0.008
+        }
     }
 }
 
