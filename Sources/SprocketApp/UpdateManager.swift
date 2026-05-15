@@ -164,6 +164,7 @@ final class UpdateManager {
             guard let stagedAppURL = findStagedApp(in: expandedURL) else {
                 throw UpdateError.appMissing
             }
+            try verifyStagedApp(stagedAppURL)
 
             status = .installing(update)
             try launchInstaller(stagedAppURL: stagedAppURL, workDirectory: workDirectory)
@@ -193,6 +194,32 @@ final class UpdateManager {
         }
         for case let url as URL in enumerator where url.lastPathComponent == appName {
             return url
+        }
+        return nil
+    }
+
+    private func verifyStagedApp(_ stagedAppURL: URL) throws {
+        try run("/usr/bin/codesign", arguments: ["--verify", "--deep", "--strict", stagedAppURL.path])
+
+        let currentTeamID = codeSignatureTeamID(for: Bundle.main.bundleURL)
+        let stagedTeamID = codeSignatureTeamID(for: stagedAppURL)
+        guard let currentTeamID else { return }
+        guard stagedTeamID == currentTeamID else {
+            throw UpdateError.teamIdentifierMismatch(expected: currentTeamID, actual: stagedTeamID ?? "none")
+        }
+
+        try run("/usr/sbin/spctl", arguments: ["--assess", "--type", "execute", stagedAppURL.path])
+    }
+
+    private func codeSignatureTeamID(for appURL: URL) -> String? {
+        guard let output = try? runAndCapture("/usr/bin/codesign", arguments: ["-dv", "--verbose=4", appURL.path]) else {
+            return nil
+        }
+        for line in output.split(whereSeparator: \.isNewline) {
+            if line.hasPrefix("TeamIdentifier=") {
+                let value = line.dropFirst("TeamIdentifier=".count)
+                return value == "not set" ? nil : String(value)
+            }
         }
         return nil
     }
@@ -228,6 +255,23 @@ final class UpdateManager {
         if process.terminationStatus != 0 {
             throw UpdateError.commandFailed(executable, process.terminationStatus)
         }
+    }
+
+    private func runAndCapture(_ executable: String, arguments: [String]) throws -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        try process.run()
+        process.waitUntilExit()
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8) ?? ""
+        if process.terminationStatus != 0 {
+            throw UpdateError.commandFailed(executable, process.terminationStatus)
+        }
+        return output
     }
 
     private static func compareVersions(_ lhs: String, _ rhs: String) -> ComparisonResult {
@@ -278,6 +322,7 @@ private enum UpdateError: LocalizedError {
     case appMissing
     case badStatus(Int)
     case commandFailed(String, Int32)
+    case teamIdentifierMismatch(expected: String, actual: String)
 
     var errorDescription: String? {
         switch self {
@@ -289,6 +334,8 @@ private enum UpdateError: LocalizedError {
             return "GitHub returned HTTP \(statusCode)."
         case .commandFailed(let command, let status):
             return "\(command) exited with status \(status)."
+        case .teamIdentifierMismatch(let expected, let actual):
+            return "The downloaded app was signed by team \(actual), but the installed app is signed by team \(expected)."
         }
     }
 }

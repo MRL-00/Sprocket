@@ -100,7 +100,10 @@ public actor GitHubClient {
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         req.setValue(config.userAgent, forHTTPHeaderField: "User-Agent")
-        req.httpBody = "client_id=\(clientID)&scope=\(scope.replacingOccurrences(of: " ", with: "%20"))".data(using: .utf8)
+        req.httpBody = formURLEncodedBody([
+            URLQueryItem(name: "client_id", value: clientID),
+            URLQueryItem(name: "scope", value: scope),
+        ])
         let (data, _) = try await session.data(for: req)
         let dec = JSONDecoder()
         return try dec.decode(DeviceCode.self, from: data)
@@ -113,8 +116,11 @@ public actor GitHubClient {
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         req.setValue(config.userAgent, forHTTPHeaderField: "User-Agent")
-        let body = "client_id=\(clientID)&device_code=\(deviceCode)&grant_type=urn:ietf:params:oauth:grant-type:device_code"
-        req.httpBody = body.data(using: .utf8)
+        req.httpBody = formURLEncodedBody([
+            URLQueryItem(name: "client_id", value: clientID),
+            URLQueryItem(name: "device_code", value: deviceCode),
+            URLQueryItem(name: "grant_type", value: "urn:ietf:params:oauth:grant-type:device_code"),
+        ])
         let (data, _) = try await session.data(for: req)
         let resp = try JSONDecoder().decode(AccessTokenResponse.self, from: data)
         if let err = resp.error {
@@ -142,8 +148,10 @@ public actor GitHubClient {
     }
 
     /// `/user/repos?sort=pushed&per_page=N`. Returns repos that have pushed activity recently.
-    public func listRepos(perPage: Int = 20) async throws -> [Repository] {
-        let req = makeRequest(path: "/user/repos?sort=pushed&per_page=\(perPage)&affiliation=owner,collaborator,organization_member")
+    public func listRepos(perPage: Int = 20, page: Int = 1) async throws -> [Repository] {
+        let perPageClamped = min(max(perPage, 1), 100)
+        let pageClamped = max(1, page)
+        let req = makeRequest(path: "/user/repos?sort=pushed&per_page=\(perPageClamped)&page=\(pageClamped)&affiliation=owner,collaborator,organization_member")
         let data = try await fetch(req)
         struct R: Decodable {
             let id: Int64
@@ -421,6 +429,12 @@ public actor GitHubClient {
         if let token { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
         if let etag = etags[req.url!] { req.setValue(etag, forHTTPHeaderField: "If-None-Match") }
         return req
+    }
+
+    private func formURLEncodedBody(_ items: [URLQueryItem]) -> Data? {
+        var components = URLComponents()
+        components.queryItems = items
+        return components.percentEncodedQuery?.data(using: .utf8)
     }
 
     private func fetch(_ req: URLRequest) async throws -> Data {

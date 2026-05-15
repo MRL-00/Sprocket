@@ -368,6 +368,7 @@ public final class AppSettings {
         pinnedWorkflows = []
         gitHubAPIBaseURL = GitHubClientConfig.defaultBaseURL.absoluteString
         userAgent = GitHubClientConfig.defaultUserAgent
+        maxReposToScan = Self.defaultMaxReposToScan
     }
 
     public func isPinned(_ run: WorkflowRun) -> Bool {

@@ -20,6 +20,7 @@ public final class AppState {
     public var rateLimit: RateLimit?
     public var actionsUsage: ActionsUsage?
     public var actionsUsageAccounts: [ActionsUsageAccount] = []
+    public var repositoryRefreshFailures: [RepositoryRefreshFailure] = []
     public var lastRefresh: Date?
     public var density: Density = .comfortable {
         didSet { settings.density = density }
@@ -62,6 +63,8 @@ public final class AppState {
     /// refresh cheap; we make up the difference by paging through repos lazily as the
     /// user scrolls.
     public static let apiPerRepoPage: Int = 5
+    public static let repoDiscoveryPerPage: Int = 100
+    public static let repoDiscoveryPageLimit: Int = 10
     public var hasMoreHistory: Bool {
         // Either we have buffered runs we haven't shown yet, or some repo can still page.
         runs.count > displayLimit || !reposWithMoreHistory.isEmpty
@@ -210,6 +213,7 @@ public final class AppState {
         self.rateLimit = MockData.rateLimit
         self.actionsUsage = MockData.actionsUsage
         self.actionsUsageAccounts = [ActionsUsageAccount(name: MockData.user.login, isOrg: false, usage: MockData.actionsUsage)]
+        self.repositoryRefreshFailures = []
         self.lastActionsUsageRefresh = Date()
         self.lastActionsUsageScopeKey = "mock"
         self.lastRefresh = Date()
@@ -431,6 +435,7 @@ public final class AppState {
         rateLimit = nil
         actionsUsage = nil
         actionsUsageAccounts = []
+        repositoryRefreshFailures = []
         lastActionsUsageRefresh = nil
         lastActionsUsageScopeKey = nil
         longRunAlertsFired = []
@@ -465,6 +470,7 @@ public final class AppState {
         rateLimit = nil
         actionsUsage = nil
         actionsUsageAccounts = []
+        repositoryRefreshFailures = []
         lastRefresh = nil
         density = settings.density
         orgScope = "All accounts"
@@ -508,23 +514,36 @@ public final class AppState {
             stateLog.info("refresh — user=\(me.login)")
             let repoCap = settings.maxReposToScan
             let perPage = Self.apiPerRepoPage
-            let repos = try await client.listRepos(perPage: repoCap).map { settings.applyPreferences(to: $0) }
+            let repos = try await discoverRepositories(unmutedTarget: repoCap)
             repositories = repos
             stateLog.info("refresh — \(repos.count) repos")
             let candidates = Array(repos.filter({ $0.watching && !$0.muted }).prefix(repoCap))
             var allRuns: [WorkflowRun] = []
             var reposWithMore: Set<String> = []
-            await withTaskGroup(of: (String, [WorkflowRun]).self) { group in
+            var failures: [RepositoryRefreshFailure] = []
+            await withTaskGroup(of: RepositoryRunPageResult.self) { group in
                 for repo in candidates {
                     group.addTask { [client] in
-                        let runs = (try? await client.listRuns(repo: repo, perPage: perPage, page: 1)) ?? []
-                        return (repo.fullName, runs)
+                        do {
+                            let runs = try await client.listRuns(repo: repo, perPage: perPage, page: 1)
+                            return RepositoryRunPageResult(fullName: repo.fullName, runs: runs, errorMessage: nil)
+                        } catch {
+                            return RepositoryRunPageResult(fullName: repo.fullName, runs: [], errorMessage: String(describing: error))
+                        }
                     }
                 }
-                for await (fullName, runs) in group {
-                    allRuns.append(contentsOf: runs)
-                    if runs.count >= perPage { reposWithMore.insert(fullName) }
+                for await result in group {
+                    allRuns.append(contentsOf: result.runs)
+                    if result.runs.count >= perPage { reposWithMore.insert(result.fullName) }
+                    if let message = result.errorMessage {
+                        failures.append(RepositoryRefreshFailure(repository: result.fullName, message: message))
+                    }
                 }
+            }
+            repositoryRefreshFailures = failures.sorted { $0.repository < $1.repository }
+            if !failures.isEmpty {
+                let failedRepos = Set(failures.map(\.repository))
+                allRuns.append(contentsOf: runs.filter { failedRepos.contains($0.repo) })
             }
             historyPage = 1
             reposWithMoreHistory = reposWithMore
@@ -540,6 +559,7 @@ public final class AppState {
             evaluateLongRunAlerts(now: Date())
         } catch {
             lastFetchError = "\(error)"
+            repositoryRefreshFailures = []
             stateLog.info("refresh failed — \(error)")
         }
     }
@@ -574,17 +594,28 @@ public final class AppState {
 
         var newRuns: [WorkflowRun] = []
         var stillMore: Set<String> = []
-        await withTaskGroup(of: (String, [WorkflowRun]).self) { group in
+        var failures: [RepositoryRefreshFailure] = []
+        await withTaskGroup(of: RepositoryRunPageResult.self) { group in
             for repo in candidates {
                 group.addTask { [client] in
-                    let page = (try? await client.listRuns(repo: repo, perPage: perPage, page: nextPage)) ?? []
-                    return (repo.fullName, page)
+                    do {
+                        let page = try await client.listRuns(repo: repo, perPage: perPage, page: nextPage)
+                        return RepositoryRunPageResult(fullName: repo.fullName, runs: page, errorMessage: nil)
+                    } catch {
+                        return RepositoryRunPageResult(fullName: repo.fullName, runs: [], errorMessage: String(describing: error))
+                    }
                 }
             }
-            for await (fullName, page) in group {
-                newRuns.append(contentsOf: page)
-                if page.count >= perPage { stillMore.insert(fullName) }
+            for await result in group {
+                newRuns.append(contentsOf: result.runs)
+                if result.runs.count >= perPage { stillMore.insert(result.fullName) }
+                if let message = result.errorMessage {
+                    failures.append(RepositoryRefreshFailure(repository: result.fullName, message: message))
+                }
             }
+        }
+        if !failures.isEmpty {
+            mergeRepositoryRefreshFailures(failures)
         }
 
         if !newRuns.isEmpty {
@@ -607,6 +638,35 @@ public final class AppState {
         if lastActionsUsageScopeKey != actionsUsageScopeKey(owners) { return true }
         guard let lastActionsUsageRefresh else { return true }
         return Date().timeIntervalSince(lastActionsUsageRefresh) >= 60 * 60
+    }
+
+    private func discoverRepositories(unmutedTarget: Int) async throws -> [Repository] {
+        var repositories: [Repository] = []
+        var seen: Set<Int64> = []
+
+        for page in 1...Self.repoDiscoveryPageLimit {
+            let pageRepos = try await client.listRepos(perPage: Self.repoDiscoveryPerPage, page: page)
+                .map { settings.applyPreferences(to: $0) }
+            for repository in pageRepos where !seen.contains(repository.id) {
+                seen.insert(repository.id)
+                repositories.append(repository)
+            }
+
+            let availableToPoll = repositories.filter { $0.watching && !$0.muted }.count
+            if availableToPoll >= unmutedTarget || pageRepos.count < Self.repoDiscoveryPerPage {
+                break
+            }
+        }
+
+        return repositories
+    }
+
+    private func mergeRepositoryRefreshFailures(_ failures: [RepositoryRefreshFailure]) {
+        var keyed = Dictionary(uniqueKeysWithValues: repositoryRefreshFailures.map { ($0.repository, $0) })
+        for failure in failures {
+            keyed[failure.repository] = failure
+        }
+        repositoryRefreshFailures = keyed.values.sorted { $0.repository < $1.repository }
     }
 
     private var shouldFetchActionsUsageForCurrentScope: Bool {
@@ -643,14 +703,17 @@ public final class AppState {
         if orgScope == "Personal" || orgScope == user.login {
             return [ActionsUsageOwner(name: user.login, isOrg: false)]
         }
-        if orgScope != "All accounts" && orgScope != "All organizations" && orgScope != "Personal" {
-            return [ActionsUsageOwner(name: orgScope, isOrg: true)]
-        }
         let orgOwners = Set(
             repositories
                 .map(\.org)
                 .filter { $0 != "Personal" && $0 != user.login }
         )
+        if orgScope == "All organizations" {
+            return orgOwners.sorted().map { ActionsUsageOwner(name: $0, isOrg: true) }
+        }
+        if orgScope != "All accounts" && orgScope != "Personal" {
+            return [ActionsUsageOwner(name: orgScope, isOrg: true)]
+        }
         return [ActionsUsageOwner(name: user.login, isOrg: false)]
             + orgOwners.sorted().map { ActionsUsageOwner(name: $0, isOrg: true) }
     }
@@ -754,4 +817,10 @@ private struct ActionsUsageOwner: Sendable, Hashable {
     var key: String {
         "\(isOrg ? "org" : "user"):\(name)"
     }
+}
+
+private struct RepositoryRunPageResult: Sendable {
+    let fullName: String
+    let runs: [WorkflowRun]
+    let errorMessage: String?
 }

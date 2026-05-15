@@ -120,6 +120,9 @@ struct AppSettingsTests {
 
         reloaded.maxReposToScan = 0
         #expect(reloaded.maxReposToScan == AppSettings.maxReposToScanRange.lowerBound)
+
+        reloaded.resetAll()
+        #expect(reloaded.maxReposToScan == AppSettings.defaultMaxReposToScan)
     }
 
     @Test("GitHub Enterprise API URLs produce matching web registration URLs")
