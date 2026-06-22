@@ -432,20 +432,32 @@ private struct RunListView: View {
             } else if filtered.isEmpty {
                 EmptyPlaceholder()
             } else {
-                ScrollView(.vertical) {
-                    LazyVStack(spacing: 0) {
-                        ForEach(Array(filtered.enumerated()), id: \.element.id) { index, run in
-                            RunRow(run: run, now: now)
-                                .equatable()
-                                .onAppear {
-                                    // Prefetch when user scrolls within 5 of the end.
-                                    if index >= filtered.count - 5 {
-                                        Task { await state.loadMoreRuns() }
+                ScrollViewReader { proxy in
+                    ScrollView(.vertical) {
+                        LazyVStack(spacing: 0) {
+                            ForEach(Array(filtered.enumerated()), id: \.element.id) { index, run in
+                                RunRow(run: run, now: now)
+                                    .equatable()
+                                    .id(run.id)
+                                    .onAppear {
+                                        // Prefetch when user scrolls within 5 of the end.
+                                        if index >= filtered.count - 5 {
+                                            Task { await state.loadMoreRuns() }
+                                        }
                                     }
-                                }
-                            Divider().opacity(0.4)
+                                Divider().opacity(0.4)
+                            }
+                            LoadMoreFooter()
                         }
-                        LoadMoreFooter()
+                    }
+                    // A new run (e.g. the yellow "running" indicator) is inserted at
+                    // the top. The popover's scroll offset is otherwise preserved
+                    // across opens, so without this the freshest run sits above the
+                    // viewport and the user must scroll up to see it.
+                    .onAppear {
+                        if let first = filtered.first {
+                            proxy.scrollTo(first.id, anchor: .top)
+                        }
                     }
                 }
             }
