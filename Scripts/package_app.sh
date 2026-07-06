@@ -29,7 +29,13 @@ OUT="$ROOT/build/$APP_NAME.app"
 rm -rf "$OUT"
 mkdir -p "$OUT/Contents/MacOS" "$OUT/Contents/Resources"
 cp "$BIN/$APP_NAME" "$OUT/Contents/MacOS/$APP_NAME"
-swift "$ROOT/Scripts/generate_app_icon.swift" "$OUT/Contents/Resources/AppIcon.icns"
+# The icon script shares SprocketGeometry with the app so the two can't drift;
+# concatenate them into one script file for the swift interpreter.
+ICON_GEN_DIR="$(mktemp -d)"
+cat "$ROOT/Sources/SprocketApp/Components/SprocketGeometry.swift" \
+    "$ROOT/Scripts/generate_app_icon.swift" > "$ICON_GEN_DIR/generate_app_icon.swift"
+swift "$ICON_GEN_DIR/generate_app_icon.swift" "$OUT/Contents/Resources/AppIcon.icns"
+rm -rf "$ICON_GEN_DIR"
 
 cat > "$OUT/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

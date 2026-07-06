@@ -50,6 +50,25 @@ public enum EffectiveStatus: String, Sendable, Hashable {
     public var isLive: Bool { self == .running || self == .queued }
 }
 
+/// Collapse a raw status + conclusion pair into the single `EffectiveStatus`
+/// the UI renders against. Shared by runs, jobs, and steps.
+func effectiveStatus(_ status: RunStatus, _ conclusion: RunConclusion?) -> EffectiveStatus {
+    switch status {
+    case .queued, .waiting, .requested, .pending: return .queued
+    case .inProgress: return .running
+    case .completed:
+        switch conclusion {
+        case .success: return .success
+        case .failure: return .failure
+        case .cancelled: return .cancelled
+        case .skipped: return .skipped
+        case .timedOut: return .timedOut
+        case .actionRequired: return .actionRequired
+        case .neutral, .stale, .none: return .unknown
+        }
+    }
+}
+
 public struct WorkflowRun: Sendable, Identifiable, Hashable, Codable {
     public let id: Int64
     public let repo: String                 // "org/repo"
@@ -108,20 +127,7 @@ public struct WorkflowRun: Sendable, Identifiable, Hashable, Codable {
     }
 
     public var effective: EffectiveStatus {
-        switch status {
-        case .queued, .waiting, .requested, .pending: return .queued
-        case .inProgress: return .running
-        case .completed:
-            switch conclusion {
-            case .success: return .success
-            case .failure: return .failure
-            case .cancelled: return .cancelled
-            case .skipped: return .skipped
-            case .timedOut: return .timedOut
-            case .actionRequired: return .actionRequired
-            case .neutral, .stale, .none: return .unknown
-            }
-        }
+        effectiveStatus(status, conclusion)
     }
 
     public var workflowKey: WorkflowKey {
@@ -269,20 +275,7 @@ public struct WorkflowStep: Sendable, Hashable, Codable, Identifiable {
     public var id: Int { number }
 
     public var effective: EffectiveStatus {
-        switch status {
-        case .queued, .waiting, .requested, .pending: return .queued
-        case .inProgress: return .running
-        case .completed:
-            switch conclusion {
-            case .success: return .success
-            case .failure: return .failure
-            case .cancelled: return .cancelled
-            case .skipped: return .skipped
-            case .timedOut: return .timedOut
-            case .actionRequired: return .actionRequired
-            case .neutral, .stale, .none: return .unknown
-            }
-        }
+        effectiveStatus(status, conclusion)
     }
 
     public func durationSeconds(now: Date = Date()) -> Int? {
@@ -330,20 +323,7 @@ public struct WorkflowJob: Sendable, Identifiable, Hashable, Codable {
     }
 
     public var effective: EffectiveStatus {
-        switch status {
-        case .queued, .waiting, .requested, .pending: return .queued
-        case .inProgress: return .running
-        case .completed:
-            switch conclusion {
-            case .success: return .success
-            case .failure: return .failure
-            case .cancelled: return .cancelled
-            case .skipped: return .skipped
-            case .timedOut: return .timedOut
-            case .actionRequired: return .actionRequired
-            case .neutral, .stale, .none: return .unknown
-            }
-        }
+        effectiveStatus(status, conclusion)
     }
 
     /// First failing step name, if any — handy for "failed at: …" labels.

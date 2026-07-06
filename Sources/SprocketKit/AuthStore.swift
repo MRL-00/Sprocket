@@ -7,14 +7,12 @@ import Security
 private let authLog = Logger(subsystem: "nz.matt.sprocket", category: "auth")
 
 public struct AuthCredentials: Sendable, Hashable, Codable {
+    // Device-flow tokens don't expire and nothing refreshes them — the token
+    // is all we store. Older keychain payloads with extra keys still decode.
     public let token: String
-    public let refreshToken: String?
-    public let expiresAt: Date?
 
-    public init(token: String, refreshToken: String? = nil, expiresAt: Date? = nil) {
+    public init(token: String) {
         self.token = token
-        self.refreshToken = refreshToken
-        self.expiresAt = expiresAt
     }
 }
 

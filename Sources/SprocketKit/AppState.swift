@@ -160,10 +160,6 @@ public final class AppState {
         return WorkflowTimingStats(completedDurations: durations, trendSeconds: trend)
     }
 
-    public func workflowTrend(for run: WorkflowRun) -> [Int] {
-        timingStats(for: run).trendSeconds
-    }
-
     public func estimatedWorkflowCostBreakdown(groupByWorkflow: Bool) -> [WorkflowCostBreakdown] {
         let calendar = Calendar.current
         let now = Date()

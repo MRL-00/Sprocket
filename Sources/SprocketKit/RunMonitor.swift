@@ -41,29 +41,12 @@ public func diff(previous: [WorkflowRun], current: [WorkflowRun]) -> [RunStateCh
     return events
 }
 
-public struct PollSchedule: Sendable, Hashable {
-    public var baseCadenceSeconds: Int
-    public var fastLaneSeconds: Int
-
-    public init(baseCadenceSeconds: Int = 60, fastLaneSeconds: Int = 15) {
-        self.baseCadenceSeconds = baseCadenceSeconds
-        self.fastLaneSeconds = fastLaneSeconds
-    }
-}
-
-/// Skeleton actor that owns the polling cadence, latest run snapshot, and
-/// emits `RunStateChange` events on transitions.
+/// Actor that owns the latest run snapshot and emits `RunStateChange`
+/// events on transitions. Polling cadence lives in `AppState`.
 public actor RunMonitor {
-    public private(set) var schedule: PollSchedule
     public private(set) var runs: [WorkflowRun] = []
 
-    public init(schedule: PollSchedule = .init()) {
-        self.schedule = schedule
-    }
-
-    public func setSchedule(_ schedule: PollSchedule) {
-        self.schedule = schedule
-    }
+    public init() {}
 
     /// Replace the snapshot and return the diff.
     @discardableResult
