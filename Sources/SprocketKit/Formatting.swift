@@ -27,9 +27,6 @@ public enum Formatting {
     }
 
     public static func compactNumber(_ n: Int) -> String {
-        let f = NumberFormatter()
-        f.numberStyle = .decimal
-        f.groupingSeparator = ","
-        return f.string(from: NSNumber(value: n)) ?? "\(n)"
+        n.formatted()
     }
 }

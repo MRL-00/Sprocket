@@ -3,12 +3,8 @@ import AppKit
 @MainActor
 enum AppWindowController {
     static func bringWelcomeToFront() {
-        bringWindowToFront(title: "Welcome")
-    }
-
-    static func bringWindowToFront(title: String) {
         NSApp.activate(ignoringOtherApps: true)
-        let window = NSApp.windows.first { $0.title == title }
+        let window = NSApp.windows.first { $0.title == "Welcome" }
         window?.makeKeyAndOrderFront(nil)
         window?.orderFrontRegardless()
     }

@@ -2,9 +2,8 @@ import Foundation
 
 enum BuildIdentity {
     static var isLocalBuild: Bool {
-        CommandLine.arguments.contains("--local")
-            || ProcessInfo.processInfo.environment["SPROCKET_LOCAL_BUILD"] == "1"
-            || Bundle.main.bundleURL.pathExtension != "app"
+        // Anything not running from a packaged .app bundle (e.g. `swift run`) is local.
+        Bundle.main.bundleURL.pathExtension != "app"
     }
 
     static func versionLabel(_ version: String) -> String {

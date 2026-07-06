@@ -382,7 +382,7 @@ private struct RefreshWarningRow: View {
         HStack(spacing: 7) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 10))
-                .foregroundStyle(Color.sprocketWarning)
+                .foregroundStyle(Color.sprocketRunning)
             Text(warningText)
                 .font(.system(size: 10.5))
                 .foregroundStyle(.secondary)
@@ -409,7 +409,7 @@ private struct RefreshWarningRow: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .background(Color.sprocketWarning.opacity(0.08))
+        .background(Color.sprocketRunning.opacity(0.08))
     }
 
     private var warningText: String {

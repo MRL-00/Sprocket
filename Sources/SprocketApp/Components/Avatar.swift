@@ -45,16 +45,14 @@ struct Avatar: View {
 }
 
 struct Chip: View {
-    var systemImage: String? = nil
+    let systemImage: String
     let text: String
 
     var body: some View {
         HStack(spacing: 3) {
-            if let s = systemImage {
-                Image(systemName: s)
-                    .font(.system(size: 8.5))
-                    .foregroundStyle(.secondary)
-            }
+            Image(systemName: systemImage)
+                .font(.system(size: 8.5))
+                .foregroundStyle(.secondary)
             Text(text)
                 .font(.system(size: 10.5, design: .monospaced))
                 .foregroundStyle(.secondary)
