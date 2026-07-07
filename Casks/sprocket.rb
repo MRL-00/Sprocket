@@ -1,6 +1,6 @@
 cask "sprocket" do
-  version "0.2.1"
-  sha256 "522d02b49de4d95f2279c396326d88e1a78ba28bab1ed75637abee5055ea8052"
+  version "0.2.2"
+  sha256 "8081b15c6ccb5cd1a30e57ac87cebcda2798670fb5656aed799ed511eeee26a4"
 
   url "https://github.com/MRL-00/Sprocket/releases/download/v#{version}/Sprocket-#{version}-macos.zip"
   name "Sprocket"
