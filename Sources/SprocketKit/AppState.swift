@@ -83,7 +83,9 @@ public final class AppState {
     public var onUsageAlerts: (@MainActor ([PlannedNotification]) -> Void)?
 
     private var pollTask: Task<Void, Never>?
+    private var longRunAlertTask: Task<Void, Never>?
     private let fastLaneSeconds: Int = 15
+    private let longRunAlertIntervalSeconds: Int = 10
     private var lastActionsUsageRefresh: Date?
     private var lastActionsUsageScopeKey: String?
     private var longRunAlertsFired: Set<Int64> = []
@@ -231,6 +233,7 @@ public final class AppState {
             await client.setToken(creds.token)
             isAuthed = true
             startPolling()
+            startLongRunAlertEvaluation()
         } else {
             stateLog.info("bootstrap — no token in keychain")
         }
@@ -257,6 +260,27 @@ public final class AppState {
     public func stopPolling() {
         pollTask?.cancel()
         pollTask = nil
+    }
+
+    /// Lightweight clock-driven long-run alert checks, independent of polling
+    /// and popover visibility. Replaces the old UI timer side effect without
+    /// re-rendering the run list every second.
+    public func startLongRunAlertEvaluation() {
+        guard longRunAlertTask == nil else { return }
+        longRunAlertTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                guard self.isAuthed else { return }
+                self.evaluateLongRunAlerts(now: Date())
+                if Task.isCancelled { return }
+                try? await Task.sleep(for: .seconds(self.longRunAlertIntervalSeconds))
+            }
+        }
+    }
+
+    public func stopLongRunAlertEvaluation() {
+        longRunAlertTask?.cancel()
+        longRunAlertTask = nil
     }
 
     private func nextPollInterval() -> Int {
@@ -328,6 +352,7 @@ public final class AppState {
                 pendingVerificationURL = nil
                 isAuthed = true
                 startPolling()
+                startLongRunAlertEvaluation()
                 return
             } catch AuthError.authorizationPending {
                 continue
@@ -422,6 +447,7 @@ public final class AppState {
 
     public func signOut() async {
         stopPolling()
+        stopLongRunAlertEvaluation()
         await auth.clearCredentials()
         await client.setToken(nil)
         isAuthed = false
@@ -454,6 +480,7 @@ public final class AppState {
 
     public func resetAllData() async {
         stopPolling()
+        stopLongRunAlertEvaluation()
         await auth.clearCredentials()
         await auth.setClientID(nil)
         settings.resetAll()
