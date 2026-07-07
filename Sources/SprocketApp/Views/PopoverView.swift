@@ -420,10 +420,18 @@ private struct RefreshWarningRow: View {
 
 private struct RunListView: View {
     @Environment(AppState.self) private var state
-    @State private var now = Date()
-    private let liveTicker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
-
     var body: some View {
+        // TimelineView is render-driven: it stops ticking while the popover
+        // window is hidden, unlike a Timer, which kept re-rendering the whole
+        // list once a second 24/7 and pinned the CPU.
+        TimelineView(.periodic(from: .now, by: 1)) { timeline in
+            content(now: timeline.date)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    @ViewBuilder
+    private func content(now: Date) -> some View {
         Group {
             if filtered.isEmpty && state.isRefreshing {
                 LoadingPlaceholder()
@@ -460,13 +468,6 @@ private struct RunListView: View {
                         }
                     }
                 }
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onReceive(liveTicker) { date in
-            now = date
-            if Int(date.timeIntervalSince1970) % 10 == 0 {
-                state.evaluateLongRunAlerts(now: date)
             }
         }
     }
