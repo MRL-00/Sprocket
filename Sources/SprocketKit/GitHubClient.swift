@@ -250,9 +250,13 @@ public actor GitHubClient {
     // MARK: - Jobs
 
     /// `/repos/{owner}/{repo}/actions/runs/{run_id}/jobs`. Decodes per-job status for a run.
+    ///
+    /// Bypasses the conditional ETag cache: expanded job rows poll this while a
+    /// run is live, and a stale 304 would leave a finished job stuck on "running".
     public func listJobs(repo: String, runID: Int64) async throws -> [WorkflowJob] {
-        let req = makeRequest(path: "/repos/\(repo)/actions/runs/\(runID)/jobs")
-        let data = try await fetch(req)
+        var req = makeRequest(path: "/repos/\(repo)/actions/runs/\(runID)/jobs")
+        req.setValue(nil, forHTTPHeaderField: "If-None-Match")
+        let data = try await fetchWithoutConditionalCache(req)
         struct Envelope: Decodable { let jobs: [Raw] }
         struct Raw: Decodable {
             let id: Int64
