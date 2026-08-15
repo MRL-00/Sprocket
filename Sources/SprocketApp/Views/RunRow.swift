@@ -134,6 +134,27 @@ struct RunRow: View, Equatable {
             }
         }
         .background(expanded ? Color.primary.opacity(0.03) : Color.clear)
+        // Jobs are a one-shot fetch unless we keep polling while the disclosure
+        // is open. Without this, a job that finishes after expand stays "running"
+        // forever (even after the parent run flips to completed).
+        .task(id: jobsRefreshTaskID) {
+            guard expanded else { return }
+            await loadJobs(force: true)
+            while !Task.isCancelled {
+                let shouldKeepPolling = run.effective.isLive
+                    || jobs.contains { $0.effective.isLive }
+                guard shouldKeepPolling else { return }
+                try? await Task.sleep(for: .seconds(5))
+                guard !Task.isCancelled, expanded else { return }
+                await loadJobs(force: true)
+            }
+        }
+    }
+
+    /// Restart the jobs poll when expansion toggles, the run identity changes,
+    /// or the run leaves/enters a live state (so we immediately pull terminal jobs).
+    private var jobsRefreshTaskID: String {
+        "\(run.id)-\(expanded)-\(run.effective.isLive)"
     }
 
     @ViewBuilder
@@ -167,17 +188,17 @@ struct RunRow: View, Equatable {
 
     private func toggleExpansion() {
         withAnimation(.easeOut(duration: 0.15)) { expanded.toggle() }
-        if expanded && jobs.isEmpty && !jobsLoading {
-            Task { await loadJobs(force: false) }
-        }
     }
 
     private func loadJobs(force: Bool) async {
         if jobsLoading { return }
         if !force && !jobs.isEmpty { return }
-        jobsLoading = true
+        // Only show the spinner on the first load — background polls should
+        // replace rows in place without flickering "Loading jobs…".
+        let showLoading = jobs.isEmpty
+        if showLoading { jobsLoading = true }
         jobsError = nil
-        defer { jobsLoading = false }
+        defer { if showLoading { jobsLoading = false } }
         do {
             if state.mockMode {
                 jobs = MockData.jobs(forRunID: run.id)
@@ -185,7 +206,10 @@ struct RunRow: View, Equatable {
                 jobs = try await state.client.listJobs(repo: run.repo, runID: run.id)
             }
         } catch {
-            jobsError = "\(error)"
+            // Keep previously loaded jobs visible during a failed background poll.
+            if jobs.isEmpty {
+                jobsError = "\(error)"
+            }
         }
     }
 
