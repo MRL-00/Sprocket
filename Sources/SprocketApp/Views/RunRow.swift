@@ -280,7 +280,6 @@ struct RunRow: View, Equatable {
 private struct RowActions: View {
     let run: WorkflowRun
     @Environment(AppState.self) private var state
-    @State private var confirmingCancel = false
 
     var body: some View {
         HStack(spacing: 4) {
@@ -293,7 +292,7 @@ private struct RowActions: View {
 
             if run.effective.isLive {
                 Button(role: .destructive) {
-                    confirmingCancel = true
+                    confirmCancellation()
                 } label: {
                     Image(systemName: "stop.circle")
                 }
@@ -311,17 +310,18 @@ private struct RowActions: View {
         .controlSize(.mini)
         .font(.system(size: 10.5))
         .foregroundStyle(.secondary)
-        .confirmationDialog(
-            "Cancel this workflow run?",
-            isPresented: $confirmingCancel,
-            titleVisibility: .visible
-        ) {
-            Button("Cancel run", role: .destructive) {
-                Task { await state.cancelRun(run) }
-            }
-            Button("Keep running", role: .cancel) {}
-        } message: {
-            Text("\(run.repo) · \(run.workflowName)")
+    }
+
+    private func confirmCancellation() {
+        let alert = NSAlert()
+        alert.messageText = "Cancel this workflow run?"
+        alert.informativeText = "\(run.repo) · \(run.workflowName)"
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Cancel run").hasDestructiveAction = true
+        alert.addButton(withTitle: "Keep running")
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            Task { await state.cancelRun(run) }
         }
     }
 }
