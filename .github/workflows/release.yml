@@ -11,6 +11,10 @@ permissions:
 jobs:
   release:
     runs-on: [self-hosted, macOS, ARM64, mac-mini]
+    env:
+      # Xcode 27's build system collides the "Sprocket" and "sprocket" products on
+      # case-insensitive APFS, so build with Xcode 26 like the macos-26 image did.
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
 
